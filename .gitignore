@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Variáveis de ambiente (NUNCA commite!)
+.env
+.env.local
+.env.*.local
+
+# Bancos vetoriais (dados gerados localmente)
+*/chroma_db/
+*/chroma/
+chroma/
+*.faiss
+
+# Dados e logs gerados
+*.log
+dados/chroma/
+dados/*.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Arquivos de cache
+.cache/
