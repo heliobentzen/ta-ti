@@ -201,7 +201,109 @@ Capacidades emergentes que surgem com escala:
 
 ---
 
-## 2.9 Limitações Técnicas
+## 2.9 Experimentando com LLMs Localmente (Gratuito)
+
+Para entender melhor como LLMs funcionam na prática, é essencial experimentar. Com **Ollama**, você pode rodar modelos open-source localmente, sem custo e sem necessidade de API keys.
+
+### Instalação do Ollama
+
+```bash
+# Linux/macOS
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Baixar um modelo leve para experimentação
+ollama pull llama3.2       # 3B parâmetros, ~2GB
+ollama pull phi3:mini       # 3.8B parâmetros, ~2.3GB
+```
+
+### Explorando a Geração de Tokens
+
+```python
+# Demonstração: ver o LLM gerando token por token
+from openai import OpenAI
+
+# Conectar ao Ollama (API compatível com OpenAI)
+client = OpenAI(
+    base_url="http://localhost:11434/v1",
+    api_key="ollama"
+)
+
+# Geração com streaming — observe a geração autorregressiva token a token
+stream = client.chat.completions.create(
+    model="llama3.2",
+    messages=[{"role": "user", "content": "Explique o que é atenção em Transformers."}],
+    stream=True,
+    temperature=0.7
+)
+
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+### Experimentando com Temperatura
+
+```python
+# Observe como a temperatura afeta a geração
+for temp in [0.0, 0.5, 1.0, 1.5]:
+    response = client.chat.completions.create(
+        model="llama3.2",
+        messages=[{"role": "user", "content": "Complete: O gato sentou no..."}],
+        temperature=temp,
+        max_tokens=20
+    )
+    print(f"Temp {temp}: {response.choices[0].message.content}")
+```
+
+> **💡 Dica educacional:** Rodar modelos localmente permite experimentar livremente sem custo. Use Ollama durante todo o curso como alternativa gratuita às APIs comerciais.
+
+---
+
+## 2.10 Construindo a Intuição — "LLM do Zero"
+
+Para realmente entender como um LLM funciona, é valioso ver a construção passo a passo. Andrej Karpathy (ex-diretor de IA da Tesla) disponibiliza gratuitamente uma série de vídeos onde constrói um modelo de linguagem do zero.
+
+### O Processo Simplificado
+
+```
+1. DADOS          → Coletar textos (ex: obras de Shakespeare)
+2. TOKENIZAÇÃO    → Converter texto em números (vocabulário)
+3. EMBEDDING      → Números → vetores densos (aprendem significado)
+4. TRANSFORMER    → Camadas de atenção + feed-forward
+5. TREINAMENTO    → Prever próximo token, ajustar pesos via backpropagation
+6. GERAÇÃO        → Dado um contexto, amostrar próximo token repetidamente
+```
+
+### Analogia Intuitiva
+
+Imagine que você leu milhões de livros e alguém começa uma frase:
+
+> "O cientista entrou no laboratório e viu que o experimento..."
+
+Seu cérebro automaticamente calcula as continuações prováveis:
+- "...tinha dado certo" (35%)
+- "...estava em andamento" (25%)
+- "...falhou novamente" (20%)
+- "...desapareceu misteriosamente" (10%)
+- ...outras opções (10%)
+
+Um LLM faz **exatamente isso**, mas de forma matemática: calcula uma distribuição de probabilidade sobre todo o vocabulário e amostra o próximo token. A temperatura controla se ele escolhe sempre a opção mais provável (conservador) ou explora opções menos comuns (criativo).
+
+### Modelos Open-Source para Estudo
+
+| Modelo | Parâmetros | Onde Obter | Destaque |
+|--------|-----------|------------|----------|
+| Llama 3.2 | 1B / 3B | Ollama, Hugging Face | Leve, roda em qualquer máquina |
+| Phi-3 Mini | 3.8B | Ollama, Hugging Face | Alta qualidade para seu tamanho |
+| Mistral 7B | 7B | Ollama, Hugging Face | Excelente relação qualidade/tamanho |
+| DeepSeek R1 (distill) | 1.5B / 7B | Ollama, Hugging Face | Raciocínio avançado, open-source |
+| Gemma 2 | 2B / 9B | Ollama, Hugging Face | Google, bom para experimentação |
+
+> **🎓 Para aprofundar:** Assista [Let's build GPT: from scratch](https://www.youtube.com/watch?v=kCc8FmEb1nY) de Andrej Karpathy (gratuito no YouTube). É a melhor forma de construir intuição sobre como Transformers e LLMs realmente funcionam.
+
+---
+
+## 2.11 Limitações Técnicas
 
 | Limitação | Causa Técnica |
 |-----------|--------------|
@@ -223,6 +325,8 @@ Capacidades emergentes que surgem com escala:
 | RLHF | Alinhamento com preferências humanas via reforço |
 | Temperatura | Controla aleatoriedade: 0 = determinístico |
 | KV Cache | Otimização que evita recomputar atenção em tokens passados |
+| Ollama | Ferramenta para rodar LLMs localmente, sem custo |
+| Modelos open-source | Llama, Phi, Mistral, DeepSeek — gratuitos para estudo |
 
 ---
 
@@ -232,6 +336,9 @@ Capacidades emergentes que surgem com escala:
 - [Attention Is All You Need](https://arxiv.org/abs/1706.03762)
 - [Language Models are Few-Shot Learners (GPT-3)](https://arxiv.org/abs/2005.14165)
 - [Training language models to follow instructions with human feedback (RLHF)](https://arxiv.org/abs/2203.02155)
+- [Let's build GPT: from scratch — Andrej Karpathy (YouTube)](https://www.youtube.com/watch?v=kCc8FmEb1nY)
+- [Ollama — Rodar LLMs localmente](https://ollama.ai)
+- [Hugging Face Open LLM Leaderboard](https://huggingface.co/spaces/HuggingFaceH4/open_llm_leaderboard)
 
 ---
 

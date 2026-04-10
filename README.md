@@ -9,14 +9,18 @@
 
 ## 🎯 Objetivo da Disciplina
 
-Esta disciplina tem como objetivo capacitar programadores a **entender e construir ferramentas práticas com Inteligência Artificial Generativa**. Ao final do curso, o aluno será capaz de:
+Esta disciplina tem como objetivo capacitar programadores a **entender e construir ferramentas práticas com Inteligência Artificial Generativa**, utilizando ferramentas **gratuitas e open-source**. Ao final do curso, o aluno será capaz de:
 
-- Compreender como funcionam os Grandes Modelos de Linguagem (LLMs)
-- Integrar APIs de IA (OpenAI, Anthropic, Google, entre outras) em aplicações reais
+- Compreender como funcionam os Grandes Modelos de Linguagem (LLMs), incluindo experimentação local
+- Integrar APIs de IA (OpenAI, Anthropic, Google) e modelos open-source (Llama, Phi, Mistral) via Ollama
 - Criar pipelines de RAG (Retrieval Augmented Generation)
-- Desenvolver agentes de IA autônomos com múltiplas ferramentas
+- Desenvolver agentes de IA autônomos com frameworks open-source (smolagents, LangGraph, LangChain)
 - Trabalhar com embeddings e bancos de dados vetoriais
+- Utilizar ferramentas gratuitas de coding com IA (Aider, Continue.dev, OpenCode)
+- Monitorar aplicações de IA com Langfuse (open-source)
 - Construir assistentes inteligentes e ferramentas com IA de ponta a ponta
+
+> **📌 Nota:** Esta disciplina é projetada para uso educacional. Todas as ferramentas e frameworks utilizados possuem opções **gratuitas ou open-source**. Modelos locais via [Ollama](https://ollama.ai) são utilizados como alternativa sem custo às APIs comerciais.
 
 ---
 
@@ -25,14 +29,14 @@ Esta disciplina tem como objetivo capacitar programadores a **entender e constru
 | # | Tema | Carga Horária |
 |---|------|---------------|
 | 01 | Introdução à IA Generativa | 2h |
-| 02 | LLMs: Como Funcionam os Grandes Modelos de Linguagem | 3h |
+| 02 | LLMs: Como Funcionam (com experimentação local via Ollama) | 3h |
 | 03 | Trabalhando com APIs de LLMs | 2h |
 | 04 | Prompt Engineering | 2h |
 | 05 | Embeddings e Representação Vetorial | 3h |
 | 06 | Bancos de Dados Vetoriais | 2h |
 | 07 | RAG — Retrieval Augmented Generation | 3h |
-| 08 | Agentes de IA | 3h |
-| 09 | Construindo Ferramentas com IA | 3h |
+| 08 | Agentes de IA (smolagents, LangGraph, LangChain) | 3h |
+| 09 | Construindo Ferramentas com IA (Langfuse, Aider, Continue.dev) | 3h |
 | 10 | Projeto Final e Tendências | 3h |
 | **Total** | | **26h** |
 
@@ -76,9 +80,10 @@ ta-ti/
 ### Pré-requisitos
 
 - Python 3.10+
-- Conta na [OpenAI Platform](https://platform.openai.com) (ou alternativa open-source)
+- [Ollama](https://ollama.ai) para rodar modelos localmente (gratuito — **principal ferramenta do curso**)
 - Familiaridade básica com programação (qualquer linguagem)
 - `pip` ou `conda` para gerenciar pacotes
+- (Opcional) Conta na [OpenAI Platform](https://platform.openai.com) ou outro provedor de API
 
 ### Configuração Inicial
 
@@ -94,6 +99,10 @@ source .venv/bin/activate  # Linux/macOS
 
 # Instale as dependências básicas (serão detalhadas em cada prática)
 pip install openai python-dotenv
+
+# Instale o Ollama e baixe um modelo (gratuito)
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama pull llama3.2
 ```
 
 ### Configurar Variáveis de Ambiente
@@ -101,9 +110,15 @@ pip install openai python-dotenv
 Crie um arquivo `.env` na raiz do projeto:
 
 ```env
-OPENAI_API_KEY=sk-...
-# Adicione outras chaves conforme necessário nas práticas
+# Para uso com Ollama (padrão do curso — gratuito):
+OLLAMA_HOST=http://localhost:11434
+
+# Para uso com APIs comerciais (opcional):
+# OPENAI_API_KEY=sk-...
+# ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+> **💡 Dica:** A maioria dos exercícios do curso pode ser realizada usando apenas o **Ollama** com modelos open-source, sem necessidade de API keys pagas.
 
 ---
 

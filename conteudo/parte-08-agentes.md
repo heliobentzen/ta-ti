@@ -271,12 +271,55 @@ class AgentWithMemory:
 
 ---
 
-## 8.6 LangGraph — Agentes com Fluxo Controlado
+## 8.6 Frameworks Open-Source para Agentes
+
+Existem vários frameworks gratuitos e open-source para construir agentes. Abaixo, os mais relevantes para uso educacional.
+
+### 8.6.1 smolagents (Hugging Face) — Recomendado para Iniciantes
+
+O [smolagents](https://github.com/huggingface/smolagents) é a biblioteca de agentes da Hugging Face. É **100% open-source**, simples e funciona com qualquer modelo (local ou API).
+
+```bash
+pip install smolagents
+```
+
+```python
+from smolagents import CodeAgent, tool, LiteLLMModel
+
+# Usar modelo local via Ollama (gratuito!)
+model = LiteLLMModel(model_id="ollama_chat/llama3.2")
+
+# Definir uma ferramenta
+@tool
+def calcular_imc(peso_kg: float, altura_cm: float) -> str:
+    """Calcula o IMC (Índice de Massa Corporal) de uma pessoa.
+    
+    Args:
+        peso_kg: Peso em quilogramas.
+        altura_cm: Altura em centímetros.
+    """
+    altura_m = altura_cm / 100
+    imc = peso_kg / (altura_m ** 2)
+    if imc < 18.5: cat = "abaixo do peso"
+    elif imc < 25: cat = "peso normal"
+    elif imc < 30: cat = "sobrepeso"
+    else: cat = "obesidade"
+    return f"IMC: {imc:.1f} — Categoria: {cat}"
+
+# Criar e executar o agente
+agent = CodeAgent(tools=[calcular_imc], model=model)
+result = agent.run("Qual é o IMC de uma pessoa com 80kg e 1.75m?")
+print(result)
+```
+
+> **💡 Vantagem:** smolagents gera código Python para resolver tarefas (CodeAgent), o que é mais transparente e educativo do que tool calling via JSON.
+
+### 8.6.2 LangGraph — Agentes com Fluxo Controlado
 
 LangGraph modela agentes como grafos com nós (ações) e arestas (condições):
 
 ```bash
-pip install langgraph langchain-openai
+pip install langgraph langchain-openai langchain-community
 ```
 
 ```python
@@ -300,7 +343,12 @@ def should_continue(state: AgentState) -> str:
 
 def call_model(state: AgentState) -> AgentState:
     """Nó: chama o LLM."""
-    model = ChatOpenAI(model="gpt-4o-mini")
+    # Usar Ollama (gratuito) ou qualquer provedor compatível com OpenAI
+    model = ChatOpenAI(
+        model="llama3.2",
+        base_url="http://localhost:11434/v1",
+        api_key="ollama"
+    )
     response = model.invoke(state["messages"])
     return {"messages": [response], "step_count": state["step_count"] + 1}
 
@@ -321,19 +369,77 @@ workflow.add_edge("tools", "agent")
 app = workflow.compile()
 ```
 
+### 8.6.3 LangChain — Ecossistema Completo
+
+LangChain oferece uma interface unificada para criar agentes com diversas ferramentas:
+
+```bash
+pip install langchain langchain-community langchain-openai
+```
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+# Usar modelo local via Ollama (gratuito)
+llm = ChatOpenAI(
+    model="llama3.2",
+    base_url="http://localhost:11434/v1",
+    api_key="ollama"
+)
+
+@tool
+def buscar_cep(cep: str) -> str:
+    """Busca informações de um CEP brasileiro."""
+    import requests
+    resp = requests.get(f"https://viacep.com.br/ws/{cep}/json/")
+    if resp.status_code == 200:
+        dados = resp.json()
+        return f"{dados.get('logradouro', '')}, {dados.get('bairro', '')} - {dados.get('localidade', '')}/{dados.get('uf', '')}"
+    return "CEP não encontrado"
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "Você é um assistente útil. Use ferramentas quando necessário."),
+    ("placeholder", "{chat_history}"),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [buscar_cep], prompt)
+executor = AgentExecutor(agent=agent, tools=[buscar_cep], verbose=True)
+
+resultado = executor.invoke({"input": "Qual endereço do CEP 01001-000?"})
+print(resultado["output"])
+```
+
+### Comparação de Frameworks
+
+| Framework | Licença | Complexidade | Funciona com Ollama? | Melhor Para |
+|-----------|---------|-------------|---------------------|-------------|
+| **smolagents** | Apache 2.0 | Simples | ✅ | Aprendizado, agentes simples |
+| **LangGraph** | MIT | Intermediária | ✅ | Fluxos complexos, multi-agente |
+| **LangChain** | MIT | Intermediária | ✅ | Ecossistema completo, RAG + agentes |
+| **CrewAI** | MIT | Simples | ✅ | Multi-agente com papéis definidos |
+
+> **🎓 Recomendação para o curso:** Comece com **smolagents** (mais simples e educativo), depois avance para **LangGraph** quando precisar de fluxos mais complexos. Todos funcionam com **Ollama** (gratuito).
+
 ---
 
 ## 8.7 Ferramentas Comuns para Agentes
 
-| Ferramenta | Uso | Biblioteca |
-|-----------|-----|-----------|
-| Busca web | Informações atuais | Tavily, SerpAPI |
-| Execução de código | Python, bash | E2B, subprocess |
-| Busca em arquivos | PDFs, docs | LlamaIndex |
-| APIs externas | CRM, ERP, clima | requests |
-| Banco de dados | SQL queries | SQLAlchemy |
-| Email/Calendar | Automação | Gmail API |
-| Navegador web | Scraping, interação | Playwright, Selenium |
+| Ferramenta | Uso | Biblioteca | Gratuita? |
+|-----------|-----|-----------|-----------|
+| Busca web | Informações atuais | DuckDuckGo Search, SearXNG | ✅ |
+| Execução de código | Python, bash | subprocess, smolagents | ✅ |
+| Busca em arquivos | PDFs, docs | LlamaIndex | ✅ |
+| APIs externas | CEP, clima, dados | requests, httpx | ✅ |
+| Banco de dados | SQL queries | SQLAlchemy | ✅ |
+| Navegador web | Scraping, interação | Playwright, Selenium | ✅ |
+| Cálculos | Matemática | Python stdlib | ✅ |
+
+> **📌 Nota:** Todas as ferramentas listadas são gratuitas e open-source, adequadas para uso educacional.
 
 ---
 
@@ -378,16 +484,21 @@ class SafeAgent:
 | Function Calling | Mecanismo para LLMs solicitarem execução de funções |
 | Multi-Agente | Múltiplos agentes especializados colaborando |
 | Guardrails | Controles de segurança para agentes autônomos |
-| LangGraph | Framework para agentes com fluxo controlado |
+| smolagents | Framework da Hugging Face, simples e open-source |
+| LangGraph | Framework para agentes com fluxo controlado (grafos) |
+| LangChain | Ecossistema completo para LLMs, RAG e agentes |
 
 ---
 
 ## 🔗 Referências
 
 - [ReAct Paper](https://arxiv.org/abs/2210.03629)
+- [smolagents — Hugging Face](https://github.com/huggingface/smolagents)
 - [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
+- [LangChain Documentation](https://python.langchain.com/docs/)
+- [CrewAI — Multi-Agent Framework](https://github.com/crewAIInc/crewAI)
+- [Ollama — Modelos locais gratuitos](https://ollama.ai)
 - [OpenAI Function Calling](https://platform.openai.com/docs/guides/function-calling)
-- [Tavily AI (busca web para agentes)](https://tavily.com)
 
 ---
 
