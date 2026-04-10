@@ -9,16 +9,16 @@
 
 ## 🎯 Objetivo da Disciplina
 
-Esta disciplina tem como objetivo capacitar programadores a **entender e construir ferramentas práticas com Inteligência Artificial Generativa**, utilizando ferramentas **gratuitas e open-source**. Ao final do curso, o aluno será capaz de:
+Esta disciplina tem como objetivo capacitar programadores a **entender e construir soluções práticas com IA Generativa**, com foco no que é relevante para o mercado agora e nos próximos anos. Ao final do curso, o aluno será capaz de:
 
-- Compreender como funcionam os Grandes Modelos de Linguagem (LLMs), incluindo experimentação local
-- Integrar APIs de IA (OpenAI, Anthropic, Google) e modelos open-source (Llama, Phi, Mistral) via Ollama
-- Criar pipelines de RAG (Retrieval Augmented Generation)
-- Desenvolver agentes de IA autônomos com frameworks open-source (smolagents, LangGraph, LangChain)
-- Trabalhar com embeddings e bancos de dados vetoriais
-- Utilizar ferramentas gratuitas de coding com IA (Aider, Continue.dev, OpenCode)
-- Monitorar aplicações de IA com Langfuse (open-source)
-- Construir assistentes inteligentes e ferramentas com IA de ponta a ponta
+- Entender a arquitetura básica de LLMs e executar modelos localmente via Ollama
+- Aplicar técnicas avançadas de prompting e formatar saídas estruturadas (JSON/Markdown)
+- Consumir APIs de IA via código e gerenciar estado/histórico de conversação
+- Implementar RAG como ferramenta de contexto dinâmico para agentes
+- Construir agentes autônomos com Function Calling, LangGraph e smolagents
+- Monitorar aplicações de IA com rastreabilidade, custos e telemetria (Langfuse)
+- Mitigar riscos como Prompt Injection em ambientes de produção
+- Integrar assistentes de codificação com IA (Claude Code e alternativas open-source) ao fluxo de desenvolvimento diário
 
 > **📌 Nota:** Esta disciplina é projetada para uso educacional. Todas as ferramentas e frameworks utilizados possuem opções **gratuitas ou open-source**. Modelos locais via [Ollama](https://ollama.ai) são utilizados como alternativa sem custo às APIs comerciais.
 
@@ -26,17 +26,35 @@ Esta disciplina tem como objetivo capacitar programadores a **entender e constru
 
 ## 📋 Ementa
 
-| # | Tema | Carga Horária |
-|---|------|---------------|
-| 01 | Introdução à IA Generativa | 2h |
-| 02 | LLMs: Como Funcionam (com experimentação local via Ollama) | 3h |
-| 03 | Prompt Engineering (incluindo janela de contexto) | 3h |
-| 04 | Embeddings, Bancos Vetoriais e RAG | 4h |
-| 05 | **Agentes de IA (smolagents, LangGraph, LangChain)** | **7h** |
-| 06 | **Construindo Ferramentas com IA (Langfuse, Aider, Continue.dev)** | **7h** |
+**IA Generativa para Desenvolvimento de Software — 26h**
+
+| # | Módulo | Carga Horária |
+|---|--------|---------------|
+| 01 | **Fundamentos e Prompt Engineering** | 5h |
+| 02 | **Integração e Gerenciamento de Estado** | 4h |
+| 03 | **O Essencial de RAG e Contexto** | 3h |
+| 04 | **Orquestração e Agentes Autônomos** | **10h** |
+| 05 | **Produção, Observabilidade e Ferramental** | 4h |
 | **Total** | | **26h** |
 
-> **📌 Foco prático:** As cargas horárias estão concentradas nos módulos 05 e 06, que cobrem os temas mais práticos e relevantes para o mercado.
+### Detalhamento dos Módulos
+
+**Módulo 01 — Fundamentos e Prompt Engineering (5h)**
+Arquitetura básica de LLMs. Execução de modelos locais (Ollama). Técnicas avançadas de prompting. Output parsing (formatação de saída em JSON/Markdown) e limites de contexto.
+
+**Módulo 02 — Integração e Gerenciamento de Estado (4h)**
+Consumo de APIs de IA via código. Resolução da natureza stateless das LLMs e injeção de memória/histórico de conversação.
+
+**Módulo 03 — O Essencial de RAG e Contexto (3h)**
+Conceitos básicos de Embeddings e busca semântica. O RAG estruturado exclusivamente como uma ferramenta de consulta (Tool) para municiar a IA com contexto dinâmico.
+
+**Módulo 04 — Orquestração e Agentes Autônomos (10h)**
+Implementação de Function Calling para integração com sistemas externos. Construção de agentes autônomos e fluxos de raciocínio com LangGraph e smolagents (consumindo o RAG e outras APIs).
+
+**Módulo 05 — Produção, Observabilidade e Ferramental (4h)**
+Monitoramento de telemetria, custos e rastreabilidade (Langfuse). Mitigação de riscos (Prompt Injection). Integração de assistentes de codificação (Claude Code, soluções open-source) ao fluxo de desenvolvimento diário.
+
+> **📌 Foco prático:** A maior carga horária está no Módulo 04, que cobre o tema mais relevante e aplicado do mercado atual: agentes autônomos.
 
 ---
 
@@ -114,29 +132,29 @@ OLLAMA_HOST=http://localhost:11434
 
 ## 📚 Conteúdo
 
-Acesse a pasta [`conteudo/`](./conteudo/) para o material teórico completo, dividido em 6 partes progressivas.
+Acesse a pasta [`conteudo/`](./conteudo/) para o material teórico completo, cobrindo todos os módulos da ementa de forma progressiva.
 
 ## 🛠️ Práticas
 
-Acesse a pasta [`praticas/`](./praticas/) para as 6 atividades práticas evolutivas, que vão de uma simples chamada à API até a construção de um assistente inteligente completo.
+Acesse a pasta [`praticas/`](./praticas/) para as atividades práticas evolutivas, que vão de uma simples chamada à API até a construção de agentes autônomos completos.
 
 ---
 
 ## 🗺️ Trilha de Aprendizado
 
 ```
-[01 Intro] → [02 LLMs] → [03 Prompts]
-                               ↓
-                    [04 Embeddings/Vetores/RAG]
-                               ↓
-                    [05 Agentes de IA ★]
-                               ↓
-                    [06 Ferramentas com IA ★]
+[01 Fundamentos + Prompts] → [02 APIs + Estado]
+                                      ↓
+                              [03 RAG como Contexto]
+                                      ↓
+                         [04 Agentes Autônomos ★★★]
+                                      ↓
+                         [05 Produção + Ferramental]
 ```
 
-> **★ Módulos com maior carga horária** — foco prático e aplicado.
+> **★★★ Módulo com maior carga horária (10h)** — foco total em agentes autônomos, o diferencial do profissional de IA hoje.
 
-**Cada parte teórica é seguida de uma prática correspondente** para fixação e aplicação imediata do conteúdo.
+**Cada módulo teórico é seguido de práticas correspondentes** para fixação e aplicação imediata do conteúdo.
 
 ---
 
