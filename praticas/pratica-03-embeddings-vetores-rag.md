@@ -720,4 +720,4 @@ for q in queries:
 
 ---
 
-⬅️ **Anterior:** [Prática 02](./pratica-02-prompt-engineering.md) | ➡️ **Próxima:** [Prática 04](./pratica-04-banco-vetorial.md)
+⬅️ **Anterior:** [Prática 02](./pratica-02-prompt-engineering.md) | ➡️ **Próxima:** [Prática 04 — Agente Simples](./pratica-04-agente-simples.md)

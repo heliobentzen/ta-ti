@@ -1,7 +1,7 @@
 # Prática 02 — Prompt Engineering na Prática
 
 > **Carga horária estimada:** 2 horas  
-> **Conteúdo relacionado:** [Parte 04](../conteudo/parte-04-prompt-engineering.md)
+> **Conteúdo relacionado:** [Parte 03](../conteudo/parte-03-prompt-engineering.md)
 
 ---
 
@@ -319,4 +319,4 @@ for p in ["critica", "alta", "media", "baixa"]:
 
 ---
 
-⬅️ **Anterior:** [Prática 01](./pratica-01-primeiros-passos-llm.md) | ➡️ **Próxima:** [Prática 03 — Embeddings](./pratica-03-embeddings.md)
+⬅️ **Anterior:** [Prática 01](./pratica-01-primeiros-passos-llm.md) | ➡️ **Próxima:** [Prática 03 — Embeddings, Vetores e RAG](./pratica-03-embeddings-vetores-rag.md)

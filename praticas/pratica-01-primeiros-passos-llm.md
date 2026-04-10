@@ -1,7 +1,7 @@
 # Prática 01 — Primeiros Passos com APIs de LLMs
 
 > **Carga horária estimada:** 2 horas  
-> **Conteúdo relacionado:** [Parte 01](../conteudo/parte-01-introducao-ia-generativa.md), [Parte 02](../conteudo/parte-02-llms-como-funcionam.md), [Parte 03](../conteudo/parte-03-apis-de-llms.md)
+> **Conteúdo relacionado:** [Parte 01](../conteudo/parte-01-introducao-ia-generativa.md) e [Parte 02](../conteudo/parte-02-llms-como-funcionam.md)
 
 ---
 

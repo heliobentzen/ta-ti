@@ -1064,5 +1064,5 @@ Se você chegou até aqui, completou a jornada de 26 horas sobre IA Generativa p
 
 ---
 
-⬅️ **Anterior:** [Prática 05](./pratica-05-rag-simples.md)  
+⬅️ **Anterior:** [Prática 05](./pratica-05-agente-ferramentas.md)  
 🏠 **Início:** [README Principal](../README.md)
