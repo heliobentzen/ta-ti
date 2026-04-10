@@ -276,6 +276,64 @@ class CachedLLM:
 
 ## 9.7 Observabilidade e Monitoramento
 
+### 9.7.1 Langfuse — Observabilidade Open-Source para LLMs
+
+[Langfuse](https://langfuse.com) é uma plataforma **open-source** de observabilidade para aplicações com LLM. Permite rastrear chamadas, medir latência, custos e qualidade das respostas. Pode ser self-hosted (gratuito) ou usar o cloud (com tier gratuito generoso).
+
+```bash
+pip install langfuse
+```
+
+```python
+from langfuse import Langfuse
+from langfuse.decorators import observe, langfuse_context
+from openai import OpenAI
+
+# Configurar Langfuse (self-hosted ou cloud gratuito)
+# Variáveis de ambiente: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+langfuse = Langfuse()
+
+@observe()
+def classificar_sentimento(texto: str) -> dict:
+    """Classifica sentimento com rastreamento automático via Langfuse."""
+    client = OpenAI(
+        base_url="http://localhost:11434/v1",  # Ollama (gratuito)
+        api_key="ollama"
+    )
+    
+    response = client.chat.completions.create(
+        model="llama3.2",
+        messages=[
+            {"role": "system", "content": "Classifique o sentimento como: positivo, negativo ou neutro. Responda apenas com a classificação."},
+            {"role": "user", "content": texto}
+        ],
+        temperature=0
+    )
+    
+    resultado = response.choices[0].message.content
+    
+    # Registrar score no Langfuse para avaliação
+    langfuse_context.score_current_trace(
+        name="sentiment_confidence",
+        value=1.0 if resultado.lower() in ["positivo", "negativo", "neutro"] else 0.0
+    )
+    
+    return {"texto": texto, "sentimento": resultado}
+
+# Usar a função — automaticamente rastreada no Langfuse
+classificar_sentimento("Adorei o produto, muito bom!")
+classificar_sentimento("Péssima experiência, não recomendo.")
+
+# Flush para garantir envio dos dados
+langfuse.flush()
+```
+
+> **🎓 Self-hosted gratuito:** Para uso educacional, Langfuse pode ser executado localmente via Docker: `docker compose up` a partir do repositório oficial.
+
+### 9.7.2 Observabilidade Manual (Sem Dependências Externas)
+
+Para uma solução mais simples, sem dependências adicionais:
+
 ```python
 import time
 import logging
@@ -294,20 +352,24 @@ class LLMCall:
 
 class ObservableLLM:
     def __init__(self):
-        self.client = OpenAI()
+        self.client = OpenAI(
+            base_url="http://localhost:11434/v1",
+            api_key="ollama"
+        )
         self.calls: list[LLMCall] = []
         self.logger = logging.getLogger(__name__)
     
     def call(self, messages: list, **kwargs) -> str:
-        log = LLMCall(model=kwargs.get("model", "gpt-4o-mini"))
+        log = LLMCall(model=kwargs.get("model", "llama3.2"))
         start = time.time()
         
         try:
             response = self.client.chat.completions.create(
                 messages=messages, **kwargs
             )
-            log.prompt_tokens = response.usage.prompt_tokens
-            log.completion_tokens = response.usage.completion_tokens
+            if response.usage:
+                log.prompt_tokens = response.usage.prompt_tokens
+                log.completion_tokens = response.usage.completion_tokens
             log.latency_ms = (time.time() - start) * 1000
             
             result = response.choices[0].message.content
@@ -371,7 +433,66 @@ def test_rag_pipeline_integration():
 
 ---
 
-## 9.9 Deployment
+## 9.9 Ferramentas de Coding com IA (Gratuitas)
+
+Para programadores, existem ferramentas gratuitas e open-source que usam LLMs para auxiliar no desenvolvimento de código. Aqui listamos as principais opções que podem ser usadas em contexto educacional, sem custo.
+
+### Ferramentas de Linha de Comando
+
+| Ferramenta | Licença | Descrição | Funciona com Ollama? |
+|-----------|---------|-----------|---------------------|
+| [Aider](https://aider.chat) | Apache 2.0 | Pair programming com IA no terminal | ✅ |
+| [OpenCode](https://github.com/opencode-ai/opencode) | MIT | Assistente de código no terminal | ✅ |
+
+### Extensões para Editores (VS Code)
+
+| Ferramenta | Licença | Descrição | Gratuita? |
+|-----------|---------|-----------|-----------|
+| [Continue.dev](https://continue.dev) | Apache 2.0 | Extensão VS Code, autocomplete e chat | ✅ (com Ollama) |
+| [Cline](https://github.com/cline/cline) | Apache 2.0 | Agente de código autônomo no VS Code | ✅ (com Ollama) |
+| [Twinny](https://github.com/rjmacarthy/twinny) | MIT | Autocomplete local com Ollama | ✅ |
+
+### Exemplo: Usando Aider com Ollama (100% Gratuito)
+
+```bash
+# Instalar Aider
+pip install aider-chat
+
+# Usar com modelo local (Ollama)
+aider --model ollama/llama3.2
+
+# Aider conecta ao seu repositório Git e permite:
+# - Editar arquivos via conversa
+# - Criar novos arquivos
+# - Refatorar código
+# - Corrigir bugs
+```
+
+### Exemplo: Continue.dev com Ollama
+
+```json
+// .continue/config.json — configuração para usar Ollama
+{
+  "models": [
+    {
+      "title": "Llama 3.2 (Local)",
+      "provider": "ollama",
+      "model": "llama3.2"
+    }
+  ],
+  "tabAutocompleteModel": {
+    "title": "Autocomplete Local",
+    "provider": "ollama",
+    "model": "deepseek-coder-v2:latest"
+  }
+}
+```
+
+> **🎓 Para educação:** A combinação **Ollama + Continue.dev** ou **Ollama + Aider** oferece uma experiência de coding com IA completamente gratuita, funcionando sem internet após baixar os modelos.
+
+---
+
+## 9.10 Deployment
 
 ### Docker
 
@@ -418,7 +539,8 @@ settings = Settings()
 | Streamlit | Interface web rápida para demos e prototipagem |
 | Async/Batch | Processar múltiplas requisições em paralelo |
 | Cache | Evitar chamadas repetidas à API |
-| Observabilidade | Monitorar latência, tokens e erros |
+| Langfuse | Observabilidade open-source para aplicações com LLM |
+| Ferramentas de coding | Aider, Continue.dev, OpenCode — gratuitos com Ollama |
 | Testes com mock | Testar comportamento sem chamar API real |
 
 ---
@@ -427,7 +549,10 @@ settings = Settings()
 
 - [FastAPI Documentation](https://fastapi.tiangolo.com)
 - [Streamlit Documentation](https://docs.streamlit.io)
-- [LangSmith (observabilidade para LLMs)](https://smith.langchain.com)
+- [Langfuse — Observabilidade Open-Source para LLMs](https://langfuse.com)
+- [Aider — AI Pair Programming](https://aider.chat)
+- [Continue.dev — IDE Extension Open-Source](https://continue.dev)
+- [OpenCode — Terminal AI Assistant](https://github.com/opencode-ai/opencode)
 - [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
 
 ---

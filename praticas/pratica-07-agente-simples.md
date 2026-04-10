@@ -525,11 +525,126 @@ for msg in conversas:
 
 ---
 
+## 📝 Exercício Bônus — Agente com smolagents (Open-Source)
+
+O [smolagents](https://github.com/huggingface/smolagents) da Hugging Face é um framework simples e open-source para construir agentes. Diferente do Function Calling, o agente gera **código Python** para resolver tarefas, o que é mais transparente.
+
+Crie `pratica07/bonus_smolagents.py`:
+
+```bash
+pip install smolagents litellm
+```
+
+```python
+from smolagents import CodeAgent, tool, LiteLLMModel
+
+# Usar modelo local via Ollama (gratuito!)
+model = LiteLLMModel(model_id="ollama_chat/llama3.2")
+
+# ─────────────────────────────────────
+# DEFINIR FERRAMENTAS
+# ─────────────────────────────────────
+
+@tool
+def calcular(operacao: str, a: float, b: float) -> str:
+    """Realiza operações matemáticas básicas.
+    
+    Args:
+        operacao: Tipo de operação ('soma', 'subtracao', 'multiplicacao', 'divisao', 'potencia').
+        a: Primeiro número.
+        b: Segundo número.
+    """
+    import math
+    ops = {
+        "soma": a + b,
+        "subtracao": a - b,
+        "multiplicacao": a * b,
+        "divisao": a / b if b != 0 else "Erro: divisão por zero",
+        "potencia": a ** b,
+    }
+    resultado = ops.get(operacao, f"Operação '{operacao}' não suportada")
+    return f"{operacao}({a}, {b}) = {resultado}"
+
+@tool
+def converter_temperatura(valor: float, de: str, para: str) -> str:
+    """Converte entre escalas de temperatura.
+    
+    Args:
+        valor: Valor da temperatura.
+        de: Escala de origem ('celsius', 'fahrenheit', 'kelvin').
+        para: Escala de destino ('celsius', 'fahrenheit', 'kelvin').
+    """
+    # Converter para Celsius primeiro
+    if de == "fahrenheit":
+        celsius = (valor - 32) * 5/9
+    elif de == "kelvin":
+        celsius = valor - 273.15
+    else:
+        celsius = valor
+    
+    # Converter de Celsius para destino
+    if para == "fahrenheit":
+        resultado = celsius * 9/5 + 32
+    elif para == "kelvin":
+        resultado = celsius + 273.15
+    else:
+        resultado = celsius
+    
+    return f"{valor}° {de} = {resultado:.1f}° {para}"
+
+@tool
+def buscar_cep(cep: str) -> str:
+    """Busca informações de endereço a partir de um CEP brasileiro.
+    
+    Args:
+        cep: CEP no formato 'XXXXX-XXX' ou 'XXXXXXXX'.
+    """
+    import requests
+    cep_limpo = cep.replace("-", "").strip()
+    try:
+        resp = requests.get(f"https://viacep.com.br/ws/{cep_limpo}/json/", timeout=5)
+        if resp.status_code == 200:
+            dados = resp.json()
+            if "erro" in dados:
+                return f"CEP {cep} não encontrado."
+            return f"{dados.get('logradouro', '')}, {dados.get('bairro', '')} - {dados.get('localidade', '')}/{dados.get('uf', '')}"
+    except Exception as e:
+        return f"Erro ao buscar CEP: {e}"
+    return "Falha na busca."
+
+# ─────────────────────────────────────
+# CRIAR E TESTAR O AGENTE
+# ─────────────────────────────────────
+
+agent = CodeAgent(
+    tools=[calcular, converter_temperatura, buscar_cep],
+    model=model,
+    max_steps=5
+)
+
+perguntas = [
+    "Quanto é 25 elevado a 3?",
+    "Converta 100°F para Celsius.",
+    "Qual o endereço do CEP 50030-230?",
+]
+
+for p in perguntas:
+    print(f"\n{'='*55}")
+    print(f"❓ {p}")
+    resultado = agent.run(p)
+    print(f"💬 {resultado}")
+```
+
+> **💡 Observe:** O smolagents mostra o código Python gerado pelo agente, permitindo entender exatamente como ele resolve cada tarefa. Isso é muito mais educativo do que o Function Calling opaco das APIs.
+
+---
+
 ## ✅ Checklist de Entrega
 
 - [ ] Ex01: agente com calculadora funcionando
 - [ ] Ex02: agente de análise de vendas
 - [ ] Ex03: agente com memória persistente
+- [ ] Bônus: agente com smolagents (open-source, gratuito)
 - [ ] Pelo menos 1 desafio opcional
 
 ---
