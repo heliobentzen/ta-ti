@@ -1,7 +1,7 @@
-# Prática 08 — Agente com Múltiplas Ferramentas Especializadas
+# Prática 05 — Agente com Múltiplas Ferramentas Especializadas
 
-> **Carga horária estimada:** 2 horas  
-> **Conteúdo relacionado:** [Parte 08](../conteudo/parte-08-agentes.md)
+> **Carga horária estimada:** 3 horas  
+> **Conteúdo relacionado:** [Parte 05](../conteudo/parte-05-agentes-ia.md)
 
 ---
 
@@ -511,4 +511,4 @@ for p in perguntas_complexas:
 
 ---
 
-⬅️ **Anterior:** [Prática 07](./pratica-07-agente-simples.md) | ➡️ **Próxima:** [Prática 09 — Pipeline Completo](./pratica-09-pipeline-completo.md)
+⬅️ **Anterior:** [Prática 04](./pratica-04-agente-simples.md) | ➡️ **Próxima:** [Prática 06 — Pipeline e Projeto Final](./pratica-06-pipeline-projeto-final.md)

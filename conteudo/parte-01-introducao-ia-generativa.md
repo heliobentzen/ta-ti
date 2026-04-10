@@ -185,3 +185,4 @@ Como construtor de ferramentas com IA, você tem responsabilidade sobre:
 ---
 
 ➡️ **Próximo:** [Parte 02 — LLMs: Como Funcionam](./parte-02-llms-como-funcionam.md)
+🏠 **Início:** [README](../README.md)

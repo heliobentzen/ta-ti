@@ -30,15 +30,13 @@ Esta disciplina tem como objetivo capacitar programadores a **entender e constru
 |---|------|---------------|
 | 01 | Introdução à IA Generativa | 2h |
 | 02 | LLMs: Como Funcionam (com experimentação local via Ollama) | 3h |
-| 03 | Trabalhando com APIs de LLMs | 2h |
-| 04 | Prompt Engineering | 2h |
-| 05 | Embeddings e Representação Vetorial | 3h |
-| 06 | Bancos de Dados Vetoriais | 2h |
-| 07 | RAG — Retrieval Augmented Generation | 3h |
-| 08 | Agentes de IA (smolagents, LangGraph, LangChain) | 3h |
-| 09 | Construindo Ferramentas com IA (Langfuse, Aider, Continue.dev) | 3h |
-| 10 | Projeto Final e Tendências | 3h |
+| 03 | Prompt Engineering (incluindo janela de contexto) | 3h |
+| 04 | Embeddings, Bancos Vetoriais e RAG | 4h |
+| 05 | **Agentes de IA (smolagents, LangGraph, LangChain)** | **7h** |
+| 06 | **Construindo Ferramentas com IA (Langfuse, Aider, Continue.dev)** | **7h** |
 | **Total** | | **26h** |
+
+> **📌 Foco prático:** As cargas horárias estão concentradas nos módulos 05 e 06, que cobrem os temas mais práticos e relevantes para o mercado.
 
 ---
 
@@ -51,26 +49,18 @@ ta-ti/
 ├── conteudo/                  ← Material teórico da disciplina
 │   ├── parte-01-introducao-ia-generativa.md
 │   ├── parte-02-llms-como-funcionam.md
-│   ├── parte-03-apis-de-llms.md
-│   ├── parte-04-prompt-engineering.md
-│   ├── parte-05-embeddings.md
-│   ├── parte-06-bancos-vetoriais.md
-│   ├── parte-07-rag.md
-│   ├── parte-08-agentes.md
-│   ├── parte-09-ferramentas-com-ia.md
-│   └── parte-10-projeto-final-e-tendencias.md
+│   ├── parte-03-prompt-engineering.md
+│   ├── parte-04-embeddings-vetores-rag.md
+│   ├── parte-05-agentes-ia.md
+│   └── parte-06-ferramentas-com-ia.md
 │
 └── praticas/                  ← Atividades práticas evolutivas
     ├── pratica-01-primeiros-passos-llm.md
     ├── pratica-02-prompt-engineering.md
-    ├── pratica-03-embeddings.md
-    ├── pratica-04-banco-vetorial.md
-    ├── pratica-05-rag-simples.md
-    ├── pratica-06-rag-avancado.md
-    ├── pratica-07-agente-simples.md
-    ├── pratica-08-agente-ferramentas.md
-    ├── pratica-09-pipeline-completo.md
-    └── pratica-10-projeto-final.md
+    ├── pratica-03-embeddings-vetores-rag.md
+    ├── pratica-04-agente-simples.md
+    ├── pratica-05-agente-ferramentas.md
+    └── pratica-06-pipeline-projeto-final.md
 ```
 
 ---
@@ -124,23 +114,27 @@ OLLAMA_HOST=http://localhost:11434
 
 ## 📚 Conteúdo
 
-Acesse a pasta [`conteudo/`](./conteudo/) para o material teórico completo, dividido em 10 partes progressivas.
+Acesse a pasta [`conteudo/`](./conteudo/) para o material teórico completo, dividido em 6 partes progressivas.
 
 ## 🛠️ Práticas
 
-Acesse a pasta [`praticas/`](./praticas/) para as 10 atividades práticas evolutivas, que vão de uma simples chamada à API até a construção de um assistente inteligente completo.
+Acesse a pasta [`praticas/`](./praticas/) para as 6 atividades práticas evolutivas, que vão de uma simples chamada à API até a construção de um assistente inteligente completo.
 
 ---
 
 ## 🗺️ Trilha de Aprendizado
 
 ```
-[01 Intro] → [02 LLMs] → [03 APIs] → [04 Prompts]
-                                            ↓
-[08 Agentes] ← [07 RAG] ← [06 Vetores] ← [05 Embeddings]
-      ↓
-[09 Ferramentas] → [10 Projeto Final]
+[01 Intro] → [02 LLMs] → [03 Prompts]
+                               ↓
+                    [04 Embeddings/Vetores/RAG]
+                               ↓
+                    [05 Agentes de IA ★]
+                               ↓
+                    [06 Ferramentas com IA ★]
 ```
+
+> **★ Módulos com maior carga horária** — foco prático e aplicado.
 
 **Cada parte teórica é seguida de uma prática correspondente** para fixação e aplicação imediata do conteúdo.
 

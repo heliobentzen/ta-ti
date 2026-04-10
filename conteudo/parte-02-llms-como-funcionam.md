@@ -259,7 +259,149 @@ for temp in [0.0, 0.5, 1.0, 1.5]:
 
 ---
 
-## 2.10 Construindo a Intuição — "LLM do Zero"
+## 2.10 Trabalhando com APIs de LLMs
+
+Agora que você entende como LLMs funcionam internamente e já experimentou com Ollama localmente (seção 2.9), vamos ver como interagir com esses modelos via APIs — a forma mais comum de usá-los em aplicações reais.
+
+### Formato de Chat (Messages API)
+
+As APIs de LLM seguem um padrão de **lista de mensagens** com papéis distintos:
+
+| Role | Descrição |
+|------|-----------|
+| `system` | Define o comportamento e persona do assistente |
+| `user` | Mensagem do usuário |
+| `assistant` | Resposta do modelo (usada para manter histórico) |
+
+### API da OpenAI — Exemplo Básico
+
+```bash
+pip install openai python-dotenv
+```
+
+```python
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+client = OpenAI()  # lê OPENAI_API_KEY do ambiente
+
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[
+        {"role": "system", "content": "Você é um assistente útil."},
+        {"role": "user", "content": "Explique recursão em uma frase."}
+    ],
+    temperature=0.7,
+    max_tokens=200
+)
+
+print(response.choices[0].message.content)
+```
+
+> **💡 Lembre-se:** Na seção 2.9 você já usou `OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")` para conectar ao Ollama. O mesmo código funciona com a API da OpenAI — basta trocar o `base_url` e usar sua chave real.
+
+### API da Anthropic (Claude) — Visão Rápida
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()  # lê ANTHROPIC_API_KEY
+
+message = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    max_tokens=1024,
+    system="Você é um assistente especializado em IA.",
+    messages=[{"role": "user", "content": "O que é RAG?"}]
+)
+
+print(message.content[0].text)
+```
+
+**Diferença chave**: Na Anthropic, `system` é um parâmetro separado, não uma mensagem na lista.
+
+### Gerenciamento de Contexto e Memória
+
+APIs não mantêm histórico entre chamadas — você gerencia a memória manualmente:
+
+```python
+class Chatbot:
+    def __init__(self, system_prompt: str):
+        self.client = OpenAI()
+        self.messages = [{"role": "system", "content": system_prompt}]
+
+    def chat(self, user_message: str) -> str:
+        self.messages.append({"role": "user", "content": user_message})
+
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=self.messages
+        )
+
+        assistant_message = response.choices[0].message.content
+        self.messages.append({"role": "assistant", "content": assistant_message})
+        return assistant_message
+
+    def clear_history(self):
+        """Mantém apenas o system prompt"""
+        self.messages = [self.messages[0]]
+
+# Uso
+bot = Chatbot("Você é um tutor de Python paciente e didático.")
+print(bot.chat("O que são decorators?"))
+print(bot.chat("Pode dar um exemplo?"))  # o modelo "lembra" a pergunta anterior
+```
+
+### Streaming
+
+Para exibir respostas progressivamente (como o ChatGPT faz):
+
+```python
+stream = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Conte uma história curta."}],
+    stream=True
+)
+
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+### Tratamento de Erros (Essencial)
+
+```python
+from openai import RateLimitError, APITimeoutError
+import time
+
+def resilient_call(client, messages, retries=3):
+    for attempt in range(retries):
+        try:
+            return client.chat.completions.create(
+                model="gpt-4o-mini", messages=messages
+            )
+        except RateLimitError:
+            time.sleep(2 ** attempt)  # exponential backoff
+        except APITimeoutError:
+            if attempt == retries - 1:
+                raise
+```
+
+### Custos — Visão Geral
+
+| Modelo | Input (por 1M tokens) | Output (por 1M tokens) |
+|--------|----------------------|----------------------|
+| gpt-4o-mini | $0.15 | $0.60 |
+| gpt-4o | $2.50 | $10.00 |
+| claude-3-5-sonnet | $3.00 | $15.00 |
+| Ollama (local) | Grátis | Grátis |
+
+**Dicas de otimização**: use modelos menores para tarefas simples, otimize prompts para reduzir tokens, e use Ollama para desenvolvimento e prototipagem.
+
+---
+
+## 2.11 Construindo a Intuição — "LLM do Zero"
 
 Para realmente entender como um LLM funciona, é valioso ver a construção passo a passo. Andrej Karpathy (ex-diretor de IA da Tesla) disponibiliza gratuitamente uma série de vídeos onde constrói um modelo de linguagem do zero.
 
@@ -303,7 +445,7 @@ Um LLM faz **exatamente isso**, mas de forma matemática: calcula uma distribui�
 
 ---
 
-## 2.11 Limitações Técnicas
+## 2.12 Limitações Técnicas
 
 | Limitação | Causa Técnica |
 |-----------|--------------|
@@ -327,6 +469,8 @@ Um LLM faz **exatamente isso**, mas de forma matemática: calcula uma distribui�
 | KV Cache | Otimização que evita recomputar atenção em tokens passados |
 | Ollama | Ferramenta para rodar LLMs localmente, sem custo |
 | Modelos open-source | Llama, Phi, Mistral, DeepSeek — gratuitos para estudo |
+| Chat format (API) | Mensagens com roles: system, user, assistant |
+| Gerenciamento de contexto | Developer gerencia histórico da conversa manualmente |
 
 ---
 
@@ -342,4 +486,4 @@ Um LLM faz **exatamente isso**, mas de forma matemática: calcula uma distribui�
 
 ---
 
-⬅️ **Anterior:** [Parte 01](./parte-01-introducao-ia-generativa.md) | ➡️ **Próximo:** [Parte 03 — APIs de LLMs](./parte-03-apis-de-llms.md)
+⬅️ **Anterior:** [Parte 01](./parte-01-introducao-ia-generativa.md) | ➡️ **Próximo:** [Parte 03 — Prompt Engineering](./parte-03-prompt-engineering.md)

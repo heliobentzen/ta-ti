@@ -1,7 +1,7 @@
-# Prática 07 — Criando um Agente Simples
+# Prática 04 — Criando um Agente Simples
 
-> **Carga horária estimada:** 2 horas  
-> **Conteúdo relacionado:** [Parte 08](../conteudo/parte-08-agentes.md)
+> **Carga horária estimada:** 3 horas  
+> **Conteúdo relacionado:** [Parte 05](../conteudo/parte-05-agentes-ia.md)
 
 ---
 
@@ -649,4 +649,4 @@ for p in perguntas:
 
 ---
 
-⬅️ **Anterior:** [Prática 06](./pratica-06-rag-avancado.md) | ➡️ **Próxima:** [Prática 08 — Agente com Ferramentas](./pratica-08-agente-ferramentas.md)
+⬅️ **Anterior:** [Prática 03](./pratica-03-embeddings-vetores-rag.md) | ➡️ **Próxima:** [Prática 05 — Agente com Ferramentas](./pratica-05-agente-ferramentas.md)

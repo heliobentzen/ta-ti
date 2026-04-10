@@ -1,13 +1,16 @@
-# Prática 10 — Projeto Final: Assistente Inteligente Completo
+# Prática 06 — Pipeline Completo e Projeto Final
 
 > **Carga horária estimada:** 3 horas  
-> **Conteúdo relacionado:** [Parte 10](../conteudo/parte-10-projeto-final-e-tendencias.md)
+> **Conteúdo relacionado:** [Parte 06](../conteudo/parte-06-ferramentas-com-ia.md)
 
 ---
 
-## 🎯 Objetivo do Projeto Final
+## 🎯 Objetivos
 
-Construir um **Assistente Inteligente** completo que integra **todos os conceitos** aprendidos na disciplina:
+Ao final desta prática, você será capaz de:
+- Construir uma API REST com FastAPI que expõe funcionalidades de IA
+- Criar uma interface web simples com Streamlit
+- Construir um **Assistente Inteligente** completo integrando LLM, RAG, Agente, Memória e Observabilidade
 
 | Componente | O que integra |
 |-----------|--------------|
@@ -20,10 +23,440 @@ Construir um **Assistente Inteligente** completo que integra **todos os conceito
 
 ---
 
-## 🏗️ Estrutura do Projeto
+## 🔧 Setup
+
+```bash
+pip install openai fastapi uvicorn streamlit python-dotenv chromadb sentence-transformers
+```
+
+---
+
+## 📝 Exercício 1 — API REST com FastAPI
+
+Crie `pratica06/api/main.py`:
+
+```python
+# pratica06/api/main.py
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from openai import OpenAI
+from dotenv import load_dotenv
+import time
+import uuid
+from datetime import datetime
+from typing import Optional
+
+load_dotenv()
+
+app = FastAPI(
+    title="IA API — IFPE TA-TI",
+    description="API de demonstração com funcionalidades de IA",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+client = OpenAI()
+
+# ── Armazenamento em memória (em produção use BD) ──
+jobs = {}          # processamento assíncrono
+request_log = []   # log de requisições
+
+# ────────────────────────────────────
+# MODELOS PYDANTIC
+# ────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    system_prompt: Optional[str] = "Você é um assistente útil."
+    temperature: float = Field(0.7, ge=0, le=2)
+    max_tokens: int = Field(500, ge=50, le=4000)
+
+class ChatResponse(BaseModel):
+    response: str
+    model: str
+    tokens_used: int
+    latency_ms: float
+    request_id: str
+
+class ClassifyRequest(BaseModel):
+    text: str
+    categories: list[str]
+
+class SummarizeRequest(BaseModel):
+    text: str
+    max_words: int = 100
+    style: str = "neutro"  # neutro, formal, casual
+
+class AsyncJobRequest(BaseModel):
+    texts: list[str]
+    operation: str  # "summarize" | "classify_sentiment" | "extract_keywords"
+
+# ────────────────────────────────────
+# MIDDLEWARE DE LOGGING
+# ────────────────────────────────────
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = (time.time() - start) * 1000
+    
+    request_log.append({
+        "timestamp": datetime.now().isoformat(),
+        "method": request.method,
+        "path": str(request.url.path),
+        "status": response.status_code,
+        "duration_ms": round(duration, 2)
+    })
+    
+    return response
+
+# ────────────────────────────────────
+# ENDPOINTS
+# ────────────────────────────────────
+
+@app.get("/")
+def root():
+    return {"status": "ok", "version": "1.0.0", "total_requests": len(request_log)}
+
+@app.get("/health")
+def health():
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(req: ChatRequest):
+    """Endpoint principal de chat com LLM."""
+    request_id = str(uuid.uuid4())[:8]
+    start = time.time()
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": req.system_prompt},
+                {"role": "user", "content": req.message}
+            ],
+            temperature=req.temperature,
+            max_tokens=req.max_tokens
+        )
+        
+        return ChatResponse(
+            response=response.choices[0].message.content,
+            model=response.model,
+            tokens_used=response.usage.total_tokens,
+            latency_ms=round((time.time() - start) * 1000, 2),
+            request_id=request_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/classify")
+def classify(req: ClassifyRequest):
+    """Classifica texto em categorias definidas pelo usuário."""
+    categories_str = ", ".join(req.categories)
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": f"""Classifique o texto em UMA das categorias: {categories_str}
+            Retorne apenas o nome da categoria, sem explicações.
+            
+            Texto: {req.text}"""
+        }],
+        temperature=0,
+        max_tokens=50
+    )
+    
+    return {
+        "text": req.text[:100],
+        "category": response.choices[0].message.content.strip(),
+        "available_categories": req.categories
+    }
+
+@app.post("/summarize")
+def summarize(req: SummarizeRequest):
+    """Sumariza um texto."""
+    style_instructions = {
+        "neutro": "de forma objetiva",
+        "formal": "em linguagem formal e técnica",
+        "casual": "de forma simples e informal"
+    }.get(req.style, "de forma objetiva")
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": f"""Resuma o texto abaixo {style_instructions} em no máximo {req.max_words} palavras.
+            
+            {req.text}"""
+        }],
+        temperature=0.3
+    )
+    
+    summary = response.choices[0].message.content
+    return {
+        "original_length": len(req.text.split()),
+        "summary_length": len(summary.split()),
+        "summary": summary
+    }
+
+@app.post("/jobs/start")
+def start_async_job(req: AsyncJobRequest, background_tasks: BackgroundTasks):
+    """Inicia processamento assíncrono de múltiplos textos."""
+    job_id = str(uuid.uuid4())[:12]
+    
+    jobs[job_id] = {
+        "id": job_id,
+        "status": "pending",
+        "operation": req.operation,
+        "total": len(req.texts),
+        "processed": 0,
+        "results": [],
+        "started_at": datetime.now().isoformat()
+    }
+    
+    background_tasks.add_task(process_job, job_id, req.texts, req.operation)
+    
+    return {"job_id": job_id, "status": "started", "total_texts": len(req.texts)}
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    """Verifica status de um job assíncrono."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job não encontrado")
+    return job
+
+@app.get("/metrics")
+def metrics():
+    """Métricas de uso da API."""
+    if not request_log:
+        return {"total_requests": 0}
+    
+    avg_latency = sum(r["duration_ms"] for r in request_log) / len(request_log)
+    status_counts = {}
+    for r in request_log:
+        status_counts[str(r["status"])] = status_counts.get(str(r["status"]), 0) + 1
+    
+    return {
+        "total_requests": len(request_log),
+        "avg_latency_ms": round(avg_latency, 2),
+        "status_distribution": status_counts,
+        "recent_requests": request_log[-5:]
+    }
+
+# ────────────────────────────────────
+# BACKGROUND TASKS
+# ────────────────────────────────────
+
+def process_job(job_id: str, texts: list, operation: str):
+    """Processa textos em background."""
+    jobs[job_id]["status"] = "running"
+    
+    for i, text in enumerate(texts):
+        try:
+            if operation == "summarize":
+                resp = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": f"Resuma em 1 frase: {text}"}],
+                    max_tokens=100
+                )
+                result = resp.choices[0].message.content
+            
+            elif operation == "classify_sentiment":
+                resp = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": f"Sentimento (positivo/negativo/neutro): {text}"}],
+                    temperature=0, max_tokens=20
+                )
+                result = resp.choices[0].message.content.strip()
+            
+            else:
+                result = f"Operação '{operation}' não suportada"
+            
+            jobs[job_id]["results"].append({"text": text[:50], "result": result})
+        
+        except Exception as e:
+            jobs[job_id]["results"].append({"text": text[:50], "error": str(e)})
+        
+        jobs[job_id]["processed"] = i + 1
+    
+    jobs[job_id]["status"] = "completed"
+    jobs[job_id]["completed_at"] = datetime.now().isoformat()
+
+# Para rodar: uvicorn pratica06.api.main:app --reload --port 8001
+```
+
+---
+
+## 📝 Exercício 2 — Interface Streamlit
+
+Crie `pratica06/app_streamlit.py`:
+
+```python
+# pratica06/app_streamlit.py
+import streamlit as st
+from openai import OpenAI
+import chromadb
+from chromadb.utils import embedding_functions
+import time
+
+st.set_page_config(
+    page_title="Assistente IA — IFPE",
+    page_icon="🤖",
+    layout="wide"
+)
+
+# ──────────────────────────────────────────────
+# SIDEBAR
+# ──────────────────────────────────────────────
+
+with st.sidebar:
+    st.title("⚙️ Configurações")
+    
+    api_key = st.text_input("OpenAI API Key", type="password", 
+                             value=st.session_state.get("api_key", ""))
+    
+    st.divider()
+    
+    model = st.selectbox("Modelo", ["gpt-4o-mini", "gpt-4o"])
+    temperature = st.slider("Temperatura", 0.0, 1.5, 0.7, 0.1)
+    max_tokens = st.number_input("Max tokens", 100, 2000, 500)
+    
+    st.divider()
+    
+    system_prompt = st.text_area(
+        "System Prompt",
+        value="Você é um assistente educacional do IFPE, especializado em IA Generativa.",
+        height=100
+    )
+    
+    if st.button("🗑️ Limpar Histórico"):
+        st.session_state.messages = []
+        st.rerun()
+
+# ──────────────────────────────────────────────
+# INTERFACE PRINCIPAL
+# ──────────────────────────────────────────────
+
+st.title("🤖 Assistente de IA Generativa")
+st.caption(f"Modelo: {model} | Temperatura: {temperature}")
+
+# Inicializar estado
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "token_count" not in st.session_state:
+    st.session_state.token_count = 0
+
+# Tabs
+tab_chat, tab_tools, tab_stats = st.tabs(["💬 Chat", "🛠️ Ferramentas", "📊 Estatísticas"])
+
+with tab_chat:
+    # Exibir histórico
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+    
+    # Input
+    if prompt := st.chat_input("Digite sua mensagem..."):
+        if not api_key:
+            st.error("Configure sua API Key na sidebar!")
+        else:
+            client = OpenAI(api_key=api_key)
+            
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.write(prompt)
+            
+            with st.chat_message("assistant"):
+                with st.spinner("Pensando..."):
+                    start = time.time()
+                    stream = client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "system", "content": system_prompt}] + 
+                                  st.session_state.messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=True
+                    )
+                    response = st.write_stream(stream)
+                    latency = (time.time() - start) * 1000
+                    st.caption(f"⏱️ {latency:.0f}ms")
+            
+            st.session_state.messages.append({"role": "assistant", "content": response})
+
+with tab_tools:
+    st.subheader("🛠️ Ferramentas de IA")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📝 Sumarizador")
+        texto = st.text_area("Cole seu texto aqui:", height=150)
+        max_words = st.slider("Máximo de palavras", 30, 200, 80)
+        
+        if st.button("Sumarizar") and texto and api_key:
+            client = OpenAI(api_key=api_key)
+            with st.spinner("Sumarizando..."):
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": f"Resuma em {max_words} palavras: {texto}"}]
+                )
+                st.success(resp.choices[0].message.content)
+    
+    with col2:
+        st.markdown("### 🎭 Classificador de Sentimento")
+        review = st.text_area("Cole o review aqui:", height=150)
+        
+        if st.button("Classificar") and review and api_key:
+            client = OpenAI(api_key=api_key)
+            with st.spinner("Classificando..."):
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": f"Classifique o sentimento (Positivo/Negativo/Neutro) e a intensidade (1-5): {review}\nRetorne JSON: {{\"sentimento\": \"\", \"intensidade\": 0, \"justificativa\": \"\"}}"}],
+                    temperature=0
+                )
+                st.json(resp.choices[0].message.content)
+
+with tab_stats:
+    st.subheader("📊 Estatísticas da Sessão")
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Mensagens trocadas", len(st.session_state.messages))
+    col2.metric("Modelo", model)
+    col3.metric("Temperatura", temperature)
+    
+    if st.session_state.messages:
+        user_msgs = [m for m in st.session_state.messages if m["role"] == "user"]
+        assistant_msgs = [m for m in st.session_state.messages if m["role"] == "assistant"]
+        
+        avg_user = sum(len(m["content"]) for m in user_msgs) / max(1, len(user_msgs))
+        avg_assistant = sum(len(m["content"]) for m in assistant_msgs) / max(1, len(assistant_msgs))
+        
+        st.markdown("#### Comprimento médio das mensagens")
+        st.bar_chart({"Usuário": [avg_user], "Assistente": [avg_assistant]})
+
+# Rodar: streamlit run pratica06/app_streamlit.py
+```
+
+---
+
+## 📝 Exercício 3 — Projeto Final: Assistente Inteligente
+
+Neste exercício você construirá um assistente completo integrando todos os conceitos do curso.
+
+### 🏗️ Estrutura do Projeto
 
 ```
-pratica10/
+pratica06/
 ├── assistente/
 │   ├── __init__.py
 │   ├── config.py          ← Configurações centralizadas
@@ -34,19 +467,20 @@ pratica10/
 ├── interface/
 │   ├── cli.py             ← Interface CLI
 │   └── app.py             ← Interface Streamlit
+├── api/
+│   └── main.py            ← API FastAPI (exercício 1)
+├── app_streamlit.py       ← Interface Streamlit (exercício 2)
 ├── dados/
 │   └── conhecimento/      ← Arquivos de conhecimento
 └── README.md              ← Documentação do seu projeto
 ```
 
----
+### Passo 3.1 — Configuração Central
 
-## 📝 Passo 1 — Configuração Central
-
-Crie `pratica10/assistente/config.py`:
+Crie `pratica06/assistente/config.py`:
 
 ```python
-# pratica10/assistente/config.py
+# pratica06/assistente/config.py
 import os
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
@@ -62,7 +496,7 @@ class Config:
     
     # RAG
     embedding_model: str = "all-MiniLM-L6-v2"
-    chroma_path: str = "./pratica10/dados/chroma"
+    chroma_path: str = "./pratica06/dados/chroma"
     collection_name: str = "assistente_kb"
     rag_top_k: int = 3
     
@@ -77,19 +511,17 @@ Seja didático, use exemplos e incentive a prática.
 Quando não souber algo, admita e sugira onde buscar."""
     
     # Observabilidade
-    log_file: str = "./pratica10/dados/assistente.log"
+    log_file: str = "./pratica06/dados/assistente.log"
 
 config = Config()
 ```
 
----
+### Passo 3.2 — Base de Conhecimento
 
-## 📝 Passo 2 — Base de Conhecimento
-
-Crie `pratica10/assistente/knowledge_base.py`:
+Crie `pratica06/assistente/knowledge_base.py`:
 
 ```python
-# pratica10/assistente/knowledge_base.py
+# pratica06/assistente/knowledge_base.py
 import chromadb
 from chromadb.utils import embedding_functions
 import hashlib
@@ -198,15 +630,12 @@ class KnowledgeBase:
         return chunks
 ```
 
----
+### Passo 3.3 — Ferramentas do Agente
 
-## 📝 Passo 3 — Ferramentas do Agente
-
-Crie `pratica10/assistente/tools.py`:
+Crie `pratica06/assistente/tools.py`:
 
 ```python
-# pratica10/assistente/tools.py
-# Defina aqui as ferramentas específicas do seu domínio
+# pratica06/assistente/tools.py
 import json
 from datetime import datetime
 
@@ -240,7 +669,6 @@ def formatar_codigo(codigo: str, linguagem: str = "python") -> str:
 # (adicione as suas aqui)
 # ──────────────────────────────────────────────
 
-# Exemplo para domínio educacional:
 CONTEUDO_CURSO = {
     "parte01": {"titulo": "Introdução à IA Generativa", "carga": "2h"},
     "parte02": {"titulo": "LLMs: Como Funcionam", "carga": "3h"},
@@ -305,14 +733,65 @@ TOOLS_MAP = {
 }
 ```
 
----
+### Passo 3.4 — Observabilidade
 
-## 📝 Passo 4 — Agente Principal
-
-Crie `pratica10/assistente/agent.py`:
+Crie `pratica06/assistente/observability.py`:
 
 ```python
-# pratica10/assistente/agent.py
+# pratica06/assistente/observability.py
+import json
+import logging
+from datetime import datetime
+from .config import config
+import os
+
+os.makedirs(os.path.dirname(config.log_file), exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[
+        logging.FileHandler(config.log_file, encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+
+class Logger:
+    def __init__(self):
+        self.logger = logging.getLogger("assistente")
+        self._total_tokens = 0
+        self._total_requests = 0
+        self._tool_calls = []
+    
+    def log_request(self, message: str):
+        self._total_requests += 1
+        self.logger.info(f"REQUEST #{self._total_requests}: {message[:100]}")
+    
+    def log_response(self, response: str):
+        self.logger.info(f"RESPONSE ({len(response)} chars)")
+    
+    def log_tokens(self, tokens: int):
+        self._total_tokens += tokens
+    
+    def log_tool_call(self, name: str, args: dict, result):
+        self._tool_calls.append({"tool": name, "args": args, "ts": datetime.now().isoformat()})
+        self.logger.info(f"TOOL: {name}({json.dumps(args)[:50]}) → {str(result)[:50]}")
+    
+    def get_stats(self) -> dict:
+        return {
+            "total_requests": self._total_requests,
+            "total_tokens": self._total_tokens,
+            "custo_estimado_usd": round(self._total_tokens * 0.00015 / 1000, 4),
+            "total_tool_calls": len(self._tool_calls)
+        }
+```
+
+### Passo 3.5 — Agente Principal
+
+Crie `pratica06/assistente/agent.py`:
+
+```python
+# pratica06/assistente/agent.py
 from openai import OpenAI
 import json
 from .config import config
@@ -412,74 +891,17 @@ class Assistente:
         }
 ```
 
----
+### Passo 3.6 — Interface CLI
 
-## 📝 Passo 5 — Observabilidade
-
-Crie `pratica10/assistente/observability.py`:
+Crie `pratica06/interface/cli.py`:
 
 ```python
-# pratica10/assistente/observability.py
-import json
-import logging
-from datetime import datetime
-from .config import config
-import os
-
-os.makedirs(os.path.dirname(config.log_file), exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    handlers=[
-        logging.FileHandler(config.log_file, encoding="utf-8"),
-        logging.StreamHandler()
-    ]
-)
-
-class Logger:
-    def __init__(self):
-        self.logger = logging.getLogger("assistente")
-        self._total_tokens = 0
-        self._total_requests = 0
-        self._tool_calls = []
-    
-    def log_request(self, message: str):
-        self._total_requests += 1
-        self.logger.info(f"REQUEST #{self._total_requests}: {message[:100]}")
-    
-    def log_response(self, response: str):
-        self.logger.info(f"RESPONSE ({len(response)} chars)")
-    
-    def log_tokens(self, tokens: int):
-        self._total_tokens += tokens
-    
-    def log_tool_call(self, name: str, args: dict, result):
-        self._tool_calls.append({"tool": name, "args": args, "ts": datetime.now().isoformat()})
-        self.logger.info(f"TOOL: {name}({json.dumps(args)[:50]}) → {str(result)[:50]}")
-    
-    def get_stats(self) -> dict:
-        return {
-            "total_requests": self._total_requests,
-            "total_tokens": self._total_tokens,
-            "custo_estimado_usd": round(self._total_tokens * 0.00015 / 1000, 4),
-            "total_tool_calls": len(self._tool_calls)
-        }
-```
-
----
-
-## 📝 Passo 6 — Interface CLI
-
-Crie `pratica10/interface/cli.py`:
-
-```python
-# pratica10/interface/cli.py
+# pratica06/interface/cli.py
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from pratica10.assistente.agent import Assistente
+from pratica06.assistente.agent import Assistente
 
 def main():
     assistente = Assistente()
@@ -559,11 +981,9 @@ if __name__ == "__main__":
     main()
 ```
 
----
+### Passo 3.7 — Documentação do Seu Projeto
 
-## 📝 Passo 7 — Documentação do Seu Projeto
-
-Crie `pratica10/README.md` com:
+Crie `pratica06/README.md` com:
 
 ```markdown
 # [Nome do Seu Assistente]
@@ -584,7 +1004,7 @@ Crie `pratica10/README.md` com:
 
 \`\`\`bash
 pip install -r requirements.txt
-python -m pratica10.interface.cli
+python -m pratica06.interface.cli
 \`\`\`
 
 ## 📚 Base de Conhecimento
@@ -624,7 +1044,9 @@ python -m pratica10.interface.cli
 
 ## ✅ Checklist de Entrega
 
-- [ ] Estrutura de pastas criada conforme o guia
+- [ ] API FastAPI rodando com pelo menos 3 endpoints
+- [ ] Interface Streamlit funcional com chat e ferramentas
+- [ ] Estrutura de pastas do assistente criada conforme o guia
 - [ ] Base de conhecimento com pelo menos 10 documentos relevantes ao domínio
 - [ ] Pelo menos 3 ferramentas específicas do domínio implementadas
 - [ ] Interface CLI ou web funcional
@@ -642,5 +1064,5 @@ Se você chegou até aqui, completou a jornada de 26 horas sobre IA Generativa p
 
 ---
 
-⬅️ **Anterior:** [Prática 09](./pratica-09-pipeline-completo.md)  
+⬅️ **Anterior:** [Prática 05](./pratica-05-agente-ferramentas.md)  
 🏠 **Início:** [README Principal](../README.md)

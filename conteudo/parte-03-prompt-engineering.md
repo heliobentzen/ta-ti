@@ -1,11 +1,11 @@
-# Parte 04 — Prompt Engineering
+# Parte 03 — Prompt Engineering
 
-> **Carga horária:** 2 horas  
+> **Carga horária:** 3 horas  
 > **Prática correspondente:** [Prática 02](../praticas/pratica-02-prompt-engineering.md)
 
 ---
 
-## 4.1 O que é Prompt Engineering?
+## 3.1 O que é Prompt Engineering?
 
 **Prompt engineering** é a arte e ciência de estruturar entradas (prompts) para obter saídas mais precisas, consistentes e úteis de LLMs.
 
@@ -15,7 +15,7 @@
 
 ---
 
-## 4.2 Anatomia de um Prompt
+## 3.2 Anatomia de um Prompt
 
 Um prompt bem estruturado geralmente contém:
 
@@ -56,7 +56,164 @@ Restrições: Não use jargões técnicos. Não prometa resultados garantidos.
 
 ---
 
-## 4.3 Técnicas Essenciais
+## 3.3 Janela de Contexto e Gestão de Tokens
+
+### O que é a Janela de Contexto?
+
+A **janela de contexto** (context window) é o número máximo de tokens que um LLM consegue processar em uma única interação — isso inclui tanto o prompt de entrada quanto a resposta gerada. Pense nela como a "memória de trabalho" do modelo: tudo o que ele pode "ver" ao mesmo tempo.
+
+Entender a janela de contexto é essencial para prompt engineering porque:
+
+- **Prompts longos demais** são truncados ou rejeitados pela API
+- **Quanto mais tokens de entrada**, mais caro e mais lento é o processamento
+- **A qualidade degrada** quando o prompt se aproxima do limite — o modelo pode "esquecer" instruções do início
+
+### O que são Tokens?
+
+Tokens não são palavras — são pedaços de texto que o modelo usa internamente. Uma palavra pode ser 1 ou mais tokens:
+
+| Texto | Tokens aproximados |
+|-------|-------------------|
+| "Olá" | 1 token |
+| "Inteligência Artificial" | 3-4 tokens |
+| Uma página de texto (~500 palavras) | ~650-750 tokens |
+| 1 linha de código Python | ~10-20 tokens |
+
+> **Regra prática:** Em português, 1 token ≈ 3-4 caracteres. Um texto com 1.000 palavras tem aproximadamente 1.300-1.500 tokens.
+
+### Contando Tokens com tiktoken
+
+A biblioteca `tiktoken` permite contar tokens exatamente como a API da OpenAI faz:
+
+```python
+import tiktoken
+
+def contar_tokens(texto: str, modelo: str = "gpt-4o") -> int:
+    """Conta o número de tokens em um texto para um modelo específico."""
+    encoding = tiktoken.encoding_for_model(modelo)
+    tokens = encoding.encode(texto)
+    return len(tokens)
+
+# Exemplos
+prompt_simples = "Traduza para inglês: Bom dia!"
+prompt_complexo = """
+Você é um especialista em análise de dados com 15 anos de experiência.
+Analise o seguinte dataset e forneça insights sobre tendências de vendas,
+sazonalidade e recomendações estratégicas para o próximo trimestre.
+"""
+
+print(f"Prompt simples: {contar_tokens(prompt_simples)} tokens")
+print(f"Prompt complexo: {contar_tokens(prompt_complexo)} tokens")
+```
+
+### Janelas de Contexto por Modelo
+
+| Modelo | Janela de Contexto | Máx. Tokens de Saída |
+|--------|-------------------|----------------------|
+| GPT-4o | 128K tokens | 16K tokens |
+| GPT-4o mini | 128K tokens | 16K tokens |
+| GPT-4 Turbo | 128K tokens | 4K tokens |
+| Claude 3.5 Sonnet | 200K tokens | 8K tokens |
+| Gemini 1.5 Pro | 2M tokens | 8K tokens |
+| Llama 3.1 (405B) | 128K tokens | 4K tokens |
+
+> **Atenção:** A janela de contexto é compartilhada entre entrada e saída. Se o modelo tem 128K de contexto e você envia 120K de prompt, sobram apenas 8K para a resposta.
+
+### Estratégias de Gestão de Tokens
+
+Quando seus dados excedem a janela de contexto, você precisa de estratégias para gerenciar os tokens:
+
+#### 1. Truncamento
+
+Cortar o texto para caber no limite, mantendo as partes mais relevantes:
+
+```python
+import tiktoken
+
+def truncar_para_limite(texto: str, limite_tokens: int, modelo: str = "gpt-4o") -> str:
+    """Trunca um texto para respeitar o limite de tokens."""
+    encoding = tiktoken.encoding_for_model(modelo)
+    tokens = encoding.encode(texto)
+    
+    if len(tokens) <= limite_tokens:
+        return texto
+    
+    tokens_truncados = tokens[:limite_tokens]
+    return encoding.decode(tokens_truncados)
+
+# Exemplo: montar prompt respeitando limites
+def montar_prompt_seguro(
+    system_prompt: str,
+    contexto: str,
+    pergunta: str,
+    limite_total: int = 4000,
+    reserva_resposta: int = 1000,
+    modelo: str = "gpt-4o"
+) -> str:
+    """Monta um prompt garantindo que caiba na janela de contexto."""
+    encoding = tiktoken.encoding_for_model(modelo)
+    
+    tokens_system = len(encoding.encode(system_prompt))
+    tokens_pergunta = len(encoding.encode(pergunta))
+    
+    # Calcular espaço disponível para contexto
+    tokens_disponiveis = limite_total - reserva_resposta - tokens_system - tokens_pergunta
+    
+    if tokens_disponiveis <= 0:
+        raise ValueError("System prompt + pergunta já excedem o limite!")
+    
+    contexto_truncado = truncar_para_limite(contexto, tokens_disponiveis, modelo)
+    
+    return f"{system_prompt}\n\nContexto:\n{contexto_truncado}\n\nPergunta: {pergunta}"
+```
+
+#### 2. Sumarização
+
+Resumir textos longos antes de incluir no prompt:
+
+```python
+def sumarizar_para_contexto(texto_longo: str, llm_call) -> str:
+    """Usa o próprio LLM para resumir textos que excedem o limite."""
+    prompt = f"""
+    Resuma o texto abaixo em no máximo 500 palavras, preservando:
+    - Dados numéricos e estatísticas
+    - Nomes e entidades mencionadas
+    - Conclusões e recomendações principais
+
+    Texto:
+    {texto_longo}
+    """
+    return llm_call(prompt)
+```
+
+#### 3. Priorização
+
+Selecionar apenas as informações mais relevantes para o prompt:
+
+```python
+def priorizar_contexto(documentos: list[str], pergunta: str, max_tokens: int = 3000) -> str:
+    """Seleciona documentos mais relevantes até atingir o limite de tokens."""
+    import tiktoken
+    encoding = tiktoken.encoding_for_model("gpt-4o")
+    
+    contexto = ""
+    tokens_usados = 0
+    
+    for doc in documentos:  # Assume que já estão ordenados por relevância
+        tokens_doc = len(encoding.encode(doc))
+        if tokens_usados + tokens_doc > max_tokens:
+            break
+        contexto += doc + "\n\n"
+        tokens_usados += tokens_doc
+    
+    return contexto
+```
+
+> **Dica:** Na Parte 04 (Embeddings e RAG), veremos como usar busca semântica para selecionar automaticamente os trechos mais relevantes de uma base de conhecimento — a forma mais eficaz de priorizar contexto.
+
+---
+
+## 3.4 Técnicas Essenciais
 
 ### Zero-Shot Prompting
 
@@ -132,7 +289,7 @@ Final Answer: O Brasil tem aproximadamente 215 milhões de habitantes.
 
 ---
 
-## 4.4 Técnicas Avançadas
+## 3.5 Técnicas Avançadas
 
 ### Role Prompting
 
@@ -200,7 +357,7 @@ final_json = llm_call(format_prompt)
 
 ---
 
-## 4.5 System Prompts Eficazes
+## 3.6 System Prompts Eficazes
 
 O system prompt define o "modo de operação" do assistente. Boas práticas:
 
@@ -228,7 +385,7 @@ Você é um assistente de código Python para desenvolvedores juniores.
 
 ---
 
-## 4.6 Segurança: Prompt Injection
+## 3.7 Segurança: Prompt Injection
 
 **Prompt injection** é um ataque onde entradas maliciosas do usuário tentam sobrescrever as instruções do sistema.
 
@@ -256,7 +413,7 @@ def safe_prompt(user_input: str) -> str:
 
 ---
 
-## 4.7 Métricas e Avaliação de Prompts
+## 3.8 Métricas e Avaliação de Prompts
 
 Como saber se seu prompt é bom?
 
@@ -284,7 +441,7 @@ def evaluate_prompt(prompt_template, test_cases, expected_outputs):
 
 ---
 
-## 4.8 Dicas Práticas
+## 3.9 Dicas Práticas
 
 ### ✅ O que fazer
 
@@ -303,7 +460,7 @@ def evaluate_prompt(prompt_template, test_cases, expected_outputs):
 
 ---
 
-## 📌 Resumo da Parte 04
+## 📌 Resumo da Parte 03
 
 | Técnica | Quando usar |
 |---------|------------|
@@ -313,6 +470,7 @@ def evaluate_prompt(prompt_template, test_cases, expected_outputs):
 | Role prompting | Quando especialização melhora a qualidade |
 | Structured Output | Quando você precisa parsear a resposta |
 | Prompt Chaining | Tarefas complexas que beneficiam de divisão |
+| Gestão de Tokens | Quando o contexto excede a janela do modelo |
 
 ---
 
@@ -322,7 +480,9 @@ def evaluate_prompt(prompt_template, test_cases, expected_outputs):
 - [OpenAI Prompt Engineering](https://platform.openai.com/docs/guides/prompt-engineering)
 - [Anthropic Prompt Library](https://docs.anthropic.com/en/prompt-library)
 - [Chain-of-Thought Prompting (Paper)](https://arxiv.org/abs/2201.11903)
+- [OpenAI Tokenizer](https://platform.openai.com/tokenizer)
+- [tiktoken — GitHub](https://github.com/openai/tiktoken)
 
 ---
 
-⬅️ **Anterior:** [Parte 03](./parte-03-apis-de-llms.md) | ➡️ **Próximo:** [Parte 05 — Embeddings](./parte-05-embeddings.md)
+⬅️ **Anterior:** [Parte 02](./parte-02-llms-como-funcionam.md) | ➡️ **Próximo:** [Parte 04](./parte-04-embeddings-vetores-rag.md)
