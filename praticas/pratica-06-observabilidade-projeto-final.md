@@ -908,7 +908,7 @@ def main():
         {
             "text": "RAG (Retrieval Augmented Generation) é uma arquitetura que combina busca de documentos com geração de texto por LLMs.",
             "source": "curso_ia",
-            "metadata": {"parte": "07", "topico": "rag"}
+            "metadata": {"parte": "05", "topico": "rag"}
         },
         {
             "text": "Embeddings são representações vetoriais de texto. Textos semanticamente similares têm vetores próximos no espaço vetorial.",
@@ -918,7 +918,7 @@ def main():
         {
             "text": "Agentes de IA usam LLMs para raciocinar e executar ações usando ferramentas (function calling).",
             "source": "curso_ia",
-            "metadata": {"parte": "08", "topico": "agentes"}
+            "metadata": {"parte": "06", "topico": "agentes"}
         },
     ]
     
