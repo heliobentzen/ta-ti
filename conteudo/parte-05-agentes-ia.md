@@ -1427,6 +1427,545 @@ class SafeAgent:
 
 ---
 
+## 5.13 Hooks, Skills e MCP
+
+### 5.13.1 Hooks — Ganchos de Ciclo de Vida
+
+**Hooks** são funções que são chamadas automaticamente em pontos específicos do ciclo de vida do agente: antes e depois de uma tool call, ao iniciar ou encerrar uma conversa, ao ocorrer um erro, etc. Eles permitem adicionar logging, validação, métricas e segurança sem modificar a lógica principal do agente.
+
+#### Hooks com LangChain (Callbacks)
+
+```python
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
+import time
+
+class AgenteHookHandler(BaseCallbackHandler):
+    """Hook handler que intercepta eventos do agente."""
+
+    def on_llm_start(self, serialized, prompts, **kwargs):
+        print(f"🚀 [HOOK] LLM iniciado — {len(prompts)} prompt(s)")
+        self._inicio = time.time()
+
+    def on_llm_end(self, response, **kwargs):
+        elapsed = time.time() - self._inicio
+        tokens = response.llm_output.get("token_usage", {})
+        print(f"✅ [HOOK] LLM concluído em {elapsed:.2f}s | tokens: {tokens}")
+
+    def on_tool_start(self, serialized, input_str, **kwargs):
+        tool_name = serialized.get("name", "desconhecida")
+        print(f"🔧 [HOOK] Ferramenta '{tool_name}' chamada com: {input_str}")
+
+    def on_tool_end(self, output, **kwargs):
+        print(f"📦 [HOOK] Ferramenta retornou: {output[:100]}...")
+
+    def on_tool_error(self, error, **kwargs):
+        print(f"❌ [HOOK] Erro na ferramenta: {error}")
+
+    def on_chain_start(self, serialized, inputs, **kwargs):
+        print(f"⛓️  [HOOK] Chain iniciada")
+
+    def on_chain_end(self, outputs, **kwargs):
+        print(f"⛓️  [HOOK] Chain encerrada")
+
+# Usar o handler como hook no modelo
+hook = AgenteHookHandler()
+llm = ChatOpenAI(model="gpt-4o-mini", callbacks=[hook])
+
+resposta = llm.invoke([HumanMessage(content="Qual é a capital do Brasil?")])
+print(resposta.content)
+```
+
+#### Hooks Customizados (sem framework)
+
+```python
+from typing import Callable, Any
+import functools
+
+# Registro central de hooks
+_hooks: dict[str, list[Callable]] = {
+    "before_tool_call": [],
+    "after_tool_call": [],
+    "on_error": [],
+    "on_agent_start": [],
+    "on_agent_end": [],
+}
+
+def register_hook(event: str, fn: Callable):
+    """Registra um hook para um evento."""
+    _hooks.setdefault(event, []).append(fn)
+
+def trigger_hook(event: str, **ctx):
+    """Dispara todos os hooks registrados para um evento."""
+    for fn in _hooks.get(event, []):
+        fn(**ctx)
+
+def with_hooks(tool_fn: Callable) -> Callable:
+    """Decorador que adiciona hooks before/after a qualquer ferramenta."""
+    @functools.wraps(tool_fn)
+    def wrapper(*args, **kwargs):
+        trigger_hook("before_tool_call", tool=tool_fn.__name__, args=args, kwargs=kwargs)
+        try:
+            result = tool_fn(*args, **kwargs)
+            trigger_hook("after_tool_call", tool=tool_fn.__name__, result=result)
+            return result
+        except Exception as e:
+            trigger_hook("on_error", tool=tool_fn.__name__, error=e)
+            raise
+    return wrapper
+
+# Registrar hooks de logging e auditoria
+register_hook("before_tool_call", lambda tool, **_: print(f"[AUDIT] chamando {tool}"))
+register_hook("after_tool_call",  lambda tool, result, **_: print(f"[AUDIT] {tool} → ok"))
+register_hook("on_error",         lambda tool, error, **_: print(f"[ALERT] {tool} falhou: {error}"))
+
+# Aplicar hooks a ferramentas existentes
+@with_hooks
+def buscar_clima(cidade: str) -> str:
+    return f"Clima em {cidade}: 25°C, ensolarado."
+
+@with_hooks
+def converter_moeda(valor: float, de: str, para: str) -> str:
+    taxas = {"USD_BRL": 5.0, "EUR_BRL": 5.5}
+    taxa = taxas.get(f"{de}_{para}", 1.0)
+    return f"{valor} {de} = {valor * taxa:.2f} {para}"
+
+# Agora todas as chamadas passam pelos hooks automaticamente
+print(buscar_clima("Recife"))
+print(converter_moeda(100, "USD", "BRL"))
+```
+
+> **💡 Casos de uso para Hooks:**
+> - **Logging/Auditoria**: registrar todas as chamadas de ferramentas para análise posterior
+> - **Métricas**: medir latência e taxa de erro por ferramenta
+> - **Validação**: bloquear chamadas com argumentos inválidos antes de executar
+> - **Caching**: interceptar antes da execução e retornar cache se disponível
+> - **Rate limiting**: controlar frequência de chamadas a APIs externas
+
+---
+
+### 5.13.2 Skills — Habilidades Reutilizáveis
+
+**Skills** (habilidades) são unidades de capacidade bem definidas, documentadas e reutilizáveis que podem ser compostas para formar agentes mais complexos. Diferente de ferramentas simples (funções isoladas), uma skill encapsula lógica, validação, contexto e pode até orquestrar múltiplas chamadas ao LLM.
+
+#### Estrutura de uma Skill
+
+```python
+from dataclasses import dataclass, field
+from typing import Any, Callable
+from openai import OpenAI
+import json
+
+client = OpenAI()
+
+@dataclass
+class Skill:
+    """Unidade de habilidade reutilizável para agentes."""
+    name: str
+    description: str
+    parameters: dict[str, Any]       # JSON Schema dos parâmetros
+    handler: Callable[..., Any]       # Função que executa a skill
+    examples: list[dict] = field(default_factory=list)  # Exemplos de uso
+
+    def to_tool_definition(self) -> dict:
+        """Converte a skill para o formato de ferramenta da OpenAI API."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            }
+        }
+
+    def execute(self, **kwargs) -> Any:
+        return self.handler(**kwargs)
+
+
+# --- Biblioteca de Skills ---
+
+def _skill_resumir(texto: str, max_palavras: int = 100) -> str:
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": f"Resuma em no máximo {max_palavras} palavras:\n\n{texto}"
+        }]
+    )
+    return resp.choices[0].message.content
+
+def _skill_traduzir(texto: str, idioma_destino: str = "inglês") -> str:
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": f"Traduza para {idioma_destino} (apenas a tradução, sem explicações):\n\n{texto}"
+        }]
+    )
+    return resp.choices[0].message.content
+
+def _skill_classificar_sentimento(texto: str) -> dict:
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": (
+                "Classifique o sentimento do texto. "
+                "Responda APENAS com JSON no formato: "
+                '{"sentimento": "positivo|negativo|neutro", "confianca": 0.0-1.0}\n\n'
+                f"Texto: {texto}"
+            )
+        }],
+        response_format={"type": "json_object"}
+    )
+    return json.loads(resp.choices[0].message.content)
+
+# Registrar skills
+SKILL_RESUMIR = Skill(
+    name="resumir_texto",
+    description="Resume um texto longo em um número máximo de palavras",
+    parameters={
+        "type": "object",
+        "properties": {
+            "texto": {"type": "string", "description": "Texto a ser resumido"},
+            "max_palavras": {"type": "integer", "description": "Máximo de palavras no resumo", "default": 100}
+        },
+        "required": ["texto"]
+    },
+    handler=_skill_resumir,
+    examples=[{"texto": "Python é uma linguagem...", "max_palavras": 50}]
+)
+
+SKILL_TRADUZIR = Skill(
+    name="traduzir_texto",
+    description="Traduz um texto para o idioma especificado",
+    parameters={
+        "type": "object",
+        "properties": {
+            "texto": {"type": "string", "description": "Texto a traduzir"},
+            "idioma_destino": {"type": "string", "description": "Idioma de destino", "default": "inglês"}
+        },
+        "required": ["texto"]
+    },
+    handler=_skill_traduzir
+)
+
+SKILL_SENTIMENTO = Skill(
+    name="classificar_sentimento",
+    description="Classifica o sentimento de um texto como positivo, negativo ou neutro",
+    parameters={
+        "type": "object",
+        "properties": {
+            "texto": {"type": "string", "description": "Texto para analisar"}
+        },
+        "required": ["texto"]
+    },
+    handler=_skill_classificar_sentimento
+)
+
+# Biblioteca central de skills
+SKILL_LIBRARY: dict[str, Skill] = {
+    s.name: s for s in [SKILL_RESUMIR, SKILL_TRADUZIR, SKILL_SENTIMENTO]
+}
+
+
+# --- Agente que usa a biblioteca de skills ---
+
+def agente_com_skills(mensagem: str) -> str:
+    tools = [s.to_tool_definition() for s in SKILL_LIBRARY.values()]
+    messages = [
+        {"role": "system", "content": "Você é um assistente de processamento de texto."},
+        {"role": "user",   "content": mensagem}
+    ]
+
+    for _ in range(5):
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini", messages=messages, tools=tools
+        )
+        msg = resp.choices[0].message
+
+        if resp.choices[0].finish_reason == "stop":
+            return msg.content
+
+        messages.append(msg)
+        for tc in msg.tool_calls:
+            skill = SKILL_LIBRARY[tc.function.name]
+            args  = json.loads(tc.function.arguments)
+            resultado = skill.execute(**args)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps(resultado, ensure_ascii=False)
+            })
+
+    return "Sem resposta."
+
+# Testar
+print(agente_com_skills("Resuma esse texto em português e depois classifique o sentimento: "
+                         "'I absolutely love using Python for AI projects! "
+                         "It makes everything so much easier and fun.'"))
+```
+
+> **💡 Vantagens de Skills vs. Ferramentas simples:**
+> - **Reutilização**: uma skill pode ser usada por vários agentes diferentes
+> - **Documentação integrada**: exemplos de uso ficam junto com a definição
+> - **Composição**: skills podem chamar outras skills
+> - **Versionamento**: fácil atualizar uma skill sem mudar o agente
+
+---
+
+### 5.13.3 MCP — Model Context Protocol
+
+**MCP (Model Context Protocol)** é um protocolo aberto criado pela Anthropic (novembro de 2024) que padroniza a comunicação entre modelos de linguagem e fontes externas de dados e ferramentas. Pense nele como um "USB-C para IA": um conector universal que permite a qualquer modelo acessar qualquer ferramenta ou dado através de uma interface padronizada.
+
+#### Arquitetura do MCP
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      APLICAÇÃO HOST                         │
+│  (Claude Desktop, VS Code, seu script Python, etc.)         │
+│                                                             │
+│   ┌──────────────┐    MCP Protocol    ┌──────────────────┐  │
+│   │  MCP Client  │◄──────────────────►│   MCP Server     │  │
+│   │  (no host)   │   (JSON-RPC 2.0)   │  (ferramenta)    │  │
+│   └──────────────┘                    └──────────────────┘  │
+│                                              │               │
+└──────────────────────────────────────────────┼───────────────┘
+                                               │
+                              ┌────────────────┼────────────────┐
+                              │  Recursos expostos pelo MCP     │
+                              │  ├─ tools      (funções)        │
+                              │  ├─ resources  (dados/arquivos) │
+                              │  └─ prompts    (templates)      │
+                              └────────────────────────────────┘
+```
+
+#### Criando um Servidor MCP em Python
+
+```python
+# pip install mcp
+from mcp.server.fastmcp import FastMCP
+import json, datetime
+
+# Criar servidor MCP
+mcp = FastMCP("AssistenteDesenvolvedor")
+
+# --- Expor TOOLS (funções que o modelo pode chamar) ---
+
+@mcp.tool()
+def executar_python(codigo: str) -> str:
+    """Executa um trecho de código Python e retorna o resultado."""
+    import io, contextlib
+    saida = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(saida):
+            exec(codigo, {})  # ⚠️ PERIGO: exec() permite execução arbitrária de código.
+                              # Em produção, use RestrictedPython ou containers isolados.
+        return saida.getvalue() or "Executado sem saída."
+    except Exception as e:
+        return f"Erro: {e}"
+
+@mcp.tool()
+def buscar_documentacao(biblioteca: str, funcao: str = "") -> str:
+    """Busca documentação de bibliotecas Python populares."""
+    docs = {
+        "pandas": "Biblioteca para análise de dados. Principais: DataFrame, Series, read_csv().",
+        "numpy":  "Computação numérica. Principais: array, zeros, linspace, dot().",
+        "fastapi": "Framework web moderno. Principais: FastAPI(), @app.get(), Depends().",
+    }
+    texto = docs.get(biblioteca.lower(), f"Documentação de '{biblioteca}' não encontrada.")
+    if funcao:
+        texto += f"\n\nPara detalhes de '{funcao}', acesse a documentação oficial da biblioteca."
+    return texto
+
+@mcp.tool()
+def criar_arquivo(caminho: str, conteudo: str) -> str:
+    """Cria um arquivo com o conteúdo especificado."""
+    try:
+        with open(caminho, "w", encoding="utf-8") as f:
+            f.write(conteudo)
+        return f"Arquivo '{caminho}' criado com sucesso ({len(conteudo)} caracteres)."
+    except Exception as e:
+        return f"Erro ao criar arquivo: {e}"
+
+# --- Expor RESOURCES (dados que o modelo pode ler) ---
+
+@mcp.resource("config://projeto")
+def configuracao_projeto() -> str:
+    """Retorna a configuração atual do projeto."""
+    config = {
+        "nome": "meu-projeto",
+        "versao": "1.0.0",
+        "python": "3.11",
+        "dependencias": ["fastapi", "openai", "chromadb"]
+    }
+    return json.dumps(config, indent=2, ensure_ascii=False)
+
+@mcp.resource("logs://recentes")
+def logs_recentes() -> str:
+    """Retorna os logs mais recentes da aplicação."""
+    agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return f"[{agora}] INFO  Servidor iniciado\n[{agora}] INFO  Conexão com banco: OK\n"
+
+# --- Expor PROMPTS (templates reutilizáveis) ---
+
+@mcp.prompt()
+def revisao_codigo(linguagem: str, codigo: str) -> str:
+    """Template para revisão de código."""
+    return (
+        f"Revise o seguinte código {linguagem} e aponte:\n"
+        f"1. Possíveis bugs\n2. Problemas de performance\n3. Melhorias de legibilidade\n\n"
+        f"```{linguagem.lower()}\n{codigo}\n```"
+    )
+
+# Iniciar servidor (stdio para integração com Claude Desktop, etc.)
+if __name__ == "__main__":
+    mcp.run()
+```
+
+#### Usando um Servidor MCP como Cliente
+
+```python
+# pip install mcp
+import asyncio
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def usar_servidor_mcp():
+    # Conectar ao servidor MCP via stdio
+    params = StdioServerParameters(
+        command="python",
+        args=["servidor_mcp.py"]  # script acima
+    )
+
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Listar ferramentas disponíveis
+            ferramentas = await session.list_tools()
+            print("🔧 Ferramentas disponíveis:")
+            for t in ferramentas.tools:
+                print(f"  - {t.name}: {t.description}")
+
+            # Listar recursos disponíveis
+            recursos = await session.list_resources()
+            print("\n📂 Recursos disponíveis:")
+            for r in recursos.resources:
+                print(f"  - {r.uri}: {r.name}")
+
+            # Chamar uma ferramenta
+            resultado = await session.call_tool(
+                "executar_python",
+                arguments={"codigo": "print(2 ** 10)"}
+            )
+            print(f"\n▶ Resultado: {resultado.content[0].text}")
+
+            # Ler um recurso
+            conteudo = await session.read_resource("config://projeto")
+            print(f"\n📄 Config: {conteudo.contents[0].text}")
+
+asyncio.run(usar_servidor_mcp())
+```
+
+#### Integrando MCP com OpenAI
+
+```python
+# pip install mcp openai
+import asyncio, json
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from openai import OpenAI
+
+openai_client = OpenAI()
+
+async def agente_com_mcp(pergunta: str):
+    params = StdioServerParameters(command="python", args=["servidor_mcp.py"])
+
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Converter ferramentas MCP para formato OpenAI
+            mcp_tools = await session.list_tools()
+            tools_openai = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.inputSchema,
+                    }
+                }
+                for t in mcp_tools.tools
+            ]
+
+            messages = [
+                {"role": "system", "content": "Você é um assistente de desenvolvimento."},
+                {"role": "user", "content": pergunta}
+            ]
+
+            for _ in range(5):
+                resp = openai_client.chat.completions.create(
+                    model="gpt-4o-mini", messages=messages, tools=tools_openai
+                )
+                msg = resp.choices[0].message
+
+                if resp.choices[0].finish_reason == "stop":
+                    return msg.content
+
+                messages.append(msg)
+                for tc in msg.tool_calls:
+                    args = json.loads(tc.function.arguments)
+                    # Chamar a ferramenta via protocolo MCP
+                    resultado = await session.call_tool(tc.function.name, arguments=args)
+                    conteudo = resultado.content[0].text if resultado.content else ""
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": conteudo
+                    })
+
+            return "Sem resposta."
+
+# Testar
+resultado = asyncio.run(agente_com_mcp("Crie um arquivo hello.py que imprime 'Olá, MCP!'"))
+print(resultado)
+```
+
+#### Servidores MCP Prontos para Usar
+
+Existe um ecossistema crescente de servidores MCP open-source:
+
+| Servidor MCP | O que fornece | Repositório |
+|---|---|---|
+| `filesystem` | Leitura/escrita de arquivos locais | `modelcontextprotocol/servers` |
+| `github` | Issues, PRs, code search no GitHub | `modelcontextprotocol/servers` |
+| `postgres` | Queries SQL em banco PostgreSQL | `modelcontextprotocol/servers` |
+| `brave-search` | Pesquisa na web via Brave Search | `modelcontextprotocol/servers` |
+| `puppeteer` | Automação de navegador web | `modelcontextprotocol/servers` |
+| `sqlite` | Banco de dados SQLite local | `modelcontextprotocol/servers` |
+
+```bash
+# Usar servidor MCP de filesystem (TypeScript/Node)
+npx @modelcontextprotocol/server-filesystem /caminho/do/projeto
+
+# Usar servidor MCP do GitHub
+npx @modelcontextprotocol/server-github
+
+# Instalar SDK Python para criar seus próprios servidores
+pip install mcp
+```
+
+> **💡 Por que o MCP importa?**
+> - **Padronização**: em vez de cada agente implementar sua própria integração, todos usam o mesmo protocolo
+> - **Reutilização**: um servidor MCP de banco de dados funciona com Claude, GPT-4, Gemini, etc.
+> - **Segurança**: o servidor MCP controla quais operações são permitidas, sem expor credenciais ao modelo
+> - **Ecossistema**: centenas de servidores MCP prontos para conectar a qualquer sistema
+
+---
+
 ## 📌 Resumo da Parte 05
 
 | Conceito | Descrição |
@@ -1451,6 +1990,9 @@ class SafeAgent:
 | smolagents | Framework da Hugging Face, simples e open-source |
 | LangGraph | Framework para agentes com fluxo controlado (grafos) |
 | LangChain | Ecossistema completo para LLMs, RAG e agentes |
+| Hooks | Funções executadas automaticamente em eventos do ciclo de vida do agente |
+| Skills | Habilidades reutilizáveis e bem documentadas que compõem o agente |
+| MCP | Model Context Protocol — padrão aberto para conectar modelos a ferramentas e dados |
 
 ---
 
@@ -1464,6 +2006,9 @@ class SafeAgent:
 - [Ollama — Modelos locais gratuitos](https://ollama.ai)
 - [OpenAI Function Calling](https://platform.openai.com/docs/guides/function-calling)
 - [Langfuse — LLM Observability](https://langfuse.com/)
+- [Model Context Protocol — Documentação Oficial](https://modelcontextprotocol.io)
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+- [MCP Servers (open-source)](https://github.com/modelcontextprotocol/servers)
 
 ---
 
