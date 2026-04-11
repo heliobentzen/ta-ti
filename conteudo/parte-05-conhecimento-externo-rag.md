@@ -1,1069 +1,1096 @@
-# Parte 04 — Embeddings, Bancos Vetoriais e RAG
+# Parte 05 — Conhecimento Externo e RAG
 
-> **Carga horária:** 4 horas  
-> **Prática correspondente:** [Prática 03](../praticas/pratica-03-embeddings-vetores-rag.md)
+> **Carga horária:** 6h  
+> **Prática correspondente:** [Prática 05](../praticas/pratica-05-rag.md)
 
 ---
 
-## 4.1 O que são Embeddings?
+## 5.1 Por que RAG? O problema de conhecimento em LLMs
 
-**Embeddings** são representações numéricas de dados (texto, imagens, áudio) na forma de vetores de alta dimensão. A ideia central é simples e poderosa:
+LLMs são treinados em snapshots do passado. O GPT-4 tem cutoff em abril de 2023. O Claude tem o seu. Qualquer modelo que você usa hoje não sabe o que aconteceu na semana passada — e mais importante: não sabe nada sobre os documentos internos da sua empresa, a documentação do seu sistema legado, as regras de negócio do seu domínio.
 
-> **Dados semanticamente similares ficam próximos no espaço vetorial.**
+Isso cria três problemas reais em produção:
+
+1. **Conhecimento desatualizado** — o modelo não sabe sobre mudanças recentes em APIs, legislação, preços, etc.
+2. **Alucinação por falta de contexto** — sem informação real, o modelo inventa respostas plausíveis mas incorretas.
+3. **Falta de conhecimento de domínio** — documentação técnica, manuais de equipamento, jurisprudência interna, políticas de RH.
+
+### Fine-tuning vs. RAG vs. Prompt engineering
+
+Esta é uma decisão que aparece em todo projeto. A tabela abaixo é brutal mas honesta:
+
+| Abordagem | Quando usar | Custo | Atualização | Transparência |
+|-----------|-------------|-------|-------------|---------------|
+| **Prompt engineering** | Comportamento geral, personalidade, estilo | Baixo | Imediata | Alta |
+| **RAG** | Conhecimento factual específico, docs internos | Médio | Fácil (reindexar) | Alta (fonte rastreável) |
+| **Fine-tuning** | Estilo muito específico, formato de saída, domínio com vocabulário único | Alto | Custoso (re-treinar) | Baixa |
+
+**A regra prática:** se o problema é "o modelo não sabe X fato", use RAG. Se o problema é "o modelo não responde no formato/estilo correto", considere fine-tuning. Se o problema é "o modelo não sabe como se comportar", use prompt engineering.
+
+Fine-tuning ensina ao modelo *como pensar*, não *o que saber*. Essa distinção elimina 80% das dúvidas.
+
+### Quando RAG é overkill
+
+RAG adiciona complexidade operacional real. Não use se:
+
+- Você tem poucos documentos que cabem no contexto do modelo (< 50 páginas)
+- Os documentos mudam raramente e o conteúdo pode ser embutido no system prompt
+- A latência extra de retrieval é inaceitável para o seu caso de uso
+- O volume de queries é baixo e o custo de contexto grande é aceitável
+
+### O pipeline RAG em visão geral
 
 ```
-"gato"   → [0.23, -0.15, 0.87, ..., 0.42]  (1536 dimensões)
-"felino" → [0.24, -0.14, 0.86, ..., 0.44]  (próximo!)
-"carro"  → [-0.78, 0.92, -0.11, ..., 0.33] (distante)
+[Documentos] → [Extração] → [Chunking] → [Embedding] → [Índice Vetorial]
+                                                               ↓
+[Usuário] → [Query] → [Embedding da query] → [Busca no índice] → [Top-K chunks]
+                                                                        ↓
+                                               [LLM com chunks no contexto] → [Resposta]
 ```
 
-Esse princípio — objetos similares têm vetores próximos — é a base de:
-- Busca semântica
-- RAG (Retrieval Augmented Generation)
-- Sistemas de recomendação
-- Detecção de duplicatas e plágio
-- Clustering de documentos
+Cada seta é um ponto de falha. Cada etapa tem trade-offs. Vamos destrinchar cada uma.
 
 ---
 
-## 4.2 Como Embeddings São Gerados?
+## 5.2 Ingestion: coleta e processamento de documentos
 
-Modelos de embedding são redes neurais treinadas para mapear texto para vetores. O treinamento tipicamente usa:
+O lixo entra, lixo sai. A qualidade do seu pipeline de ingestion determina o teto da qualidade do seu RAG. Muito time subestima esta etapa.
 
-### Modelos Contrastivos (SBERT, etc.)
+### Formatos de documento e seus desafios
 
-Treinados com pares de frases similares/dissimilares:
-- **Pares positivos**: "banco de dados" e "SGBD" → vetores próximos
-- **Pares negativos**: "banco de dados" e "banco do Brasil" → vetores distantes
+| Formato | Biblioteca Python | Desafio principal |
+|---------|------------------|-------------------|
+| PDF | `pymupdf`, `pdfplumber`, `pypdf` | Tabelas, colunas múltiplas, PDFs escaneados (precisa OCR) |
+| HTML | `beautifulsoup4`, `trafilatura` | Remover nav, footer, ads; preservar estrutura |
+| DOCX | `python-docx` | Tabelas embutidas, imagens com texto |
+| Markdown | Direto (é texto) | Praticamente nenhum |
+| Banco de dados | SQLAlchemy | Definir quais campos são relevantes |
+| Emails | `mailparser` | Threading, anexos, assinaturas |
 
-### Modelos de Linguagem Mascarados (BERT-based)
-
-Extraem a representação do token `[CLS]` após o processamento completo do texto.
-
-### Modelos de Embedding Dedicados
-
-- **OpenAI text-embedding-3**: treinados especificamente para embedding
-- **Sentence-Transformers**: família open-source altamente eficiente
-- **E5, BGE, Nomic**: modelos open-source de alta performance
-
----
-
-## 4.3 Dimensionalidade
-
-Modelos populares e suas dimensões:
-
-| Modelo | Dimensões | Contexto | Open-source |
-|--------|-----------|----------|-------------|
-| text-embedding-ada-002 | 1536 | 8191 tokens | ❌ |
-| text-embedding-3-small | 1536 | 8191 tokens | ❌ |
-| text-embedding-3-large | 3072 | 8191 tokens | ❌ |
-| all-MiniLM-L6-v2 | 384 | 512 tokens | ✅ |
-| all-mpnet-base-v2 | 768 | 514 tokens | ✅ |
-| nomic-embed-text | 768 | 8192 tokens | ✅ |
-| mxbai-embed-large | 1024 | 512 tokens | ✅ |
-
-**Trade-off**: mais dimensões → mais expressividade, mas mais memória e custo de computação.
-
----
-
-## 4.4 Gerando Embeddings na Prática
-
-### Com a API da OpenAI
+### Pipeline de ingestion com tratamento de erros
 
 ```python
-from openai import OpenAI
+import hashlib
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
 
-client = OpenAI()
+import pymupdf  # pip install pymupdf
+from bs4 import BeautifulSoup  # pip install beautifulsoup4
 
-def get_embedding(text: str, model: str = "text-embedding-3-small") -> list[float]:
-    """Gera embedding para um texto."""
-    text = text.replace("\n", " ")  # boa prática
-    response = client.embeddings.create(input=text, model=model)
-    return response.data[0].embedding
+logger = logging.getLogger(__name__)
 
-# Exemplo
-embedding = get_embedding("Inteligência Artificial Generativa")
-print(f"Dimensões: {len(embedding)}")  # 1536
-print(f"Primeiros valores: {embedding[:5]}")
-```
 
-### Em Lote (Batch)
+@dataclass
+class Document:
+    content: str
+    source: str
+    doc_type: str
+    metadata: dict = field(default_factory=dict)
 
-```python
-def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
-    """Gera embeddings para múltiplos textos de uma vez."""
-    texts = [t.replace("\n", " ") for t in texts]
-    response = client.embeddings.create(
-        input=texts,
-        model="text-embedding-3-small"
+    @property
+    def content_hash(self) -> str:
+        return hashlib.md5(self.content.encode()).hexdigest()
+
+
+def extract_pdf(path: Path) -> Optional[Document]:
+    try:
+        doc = pymupdf.open(str(path))
+        pages = []
+        for page_num, page in enumerate(doc):
+            text = page.get_text("text")
+            if text.strip():
+                pages.append(text)
+
+        if not pages:
+            logger.warning(f"PDF vazio ou escaneado (sem texto extraível): {path}")
+            return None
+
+        content = "\n\n".join(pages)
+        return Document(
+            content=content,
+            source=str(path),
+            doc_type="pdf",
+            metadata={"pages": len(pages), "filename": path.name},
+        )
+    except Exception as e:
+        logger.error(f"Falha ao extrair PDF {path}: {e}")
+        return None
+
+
+def extract_html(path: Path) -> Optional[Document]:
+    try:
+        html = path.read_text(encoding="utf-8", errors="replace")
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Remove elementos não-conteúdo
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n", strip=True)
+        lines = [l for l in text.splitlines() if l.strip()]
+        content = "\n".join(lines)
+
+        title = soup.title.string if soup.title else path.stem
+        return Document(
+            content=content,
+            source=str(path),
+            doc_type="html",
+            metadata={"title": title, "filename": path.name},
+        )
+    except Exception as e:
+        logger.error(f"Falha ao extrair HTML {path}: {e}")
+        return None
+
+
+def extract_markdown(path: Path) -> Optional[Document]:
+    try:
+        content = path.read_text(encoding="utf-8")
+        return Document(
+            content=content,
+            source=str(path),
+            doc_type="markdown",
+            metadata={"filename": path.name},
+        )
+    except Exception as e:
+        logger.error(f"Falha ao ler Markdown {path}: {e}")
+        return None
+
+
+EXTRACTORS = {
+    ".pdf": extract_pdf,
+    ".html": extract_html,
+    ".htm": extract_html,
+    ".md": extract_markdown,
+    ".txt": extract_markdown,
+}
+
+
+def ingest_directory(directory: Path) -> list[Document]:
+    documents = []
+    skipped = 0
+
+    for path in directory.rglob("*"):
+        if not path.is_file():
+            continue
+        extractor = EXTRACTORS.get(path.suffix.lower())
+        if extractor is None:
+            skipped += 1
+            continue
+        doc = extractor(path)
+        if doc:
+            documents.append(doc)
+
+    logger.info(
+        f"Ingestion: {len(documents)} documentos extraídos, "
+        f"{skipped} arquivos ignorados (formato não suportado)"
     )
-    return [item.embedding for item in response.data]
-
-# Muito mais eficiente que chamar uma por uma
-docs = ["Python é uma linguagem", "IA está em todo lugar", "Machine learning é poderoso"]
-embeddings = get_embeddings_batch(docs)
-print(f"Gerados {len(embeddings)} embeddings")
+    return documents
 ```
 
-### Com Sentence-Transformers (Gratuito, Local)
-
-```bash
-pip install sentence-transformers
-```
+### Limpeza e pré-processamento
 
 ```python
-from sentence_transformers import SentenceTransformer
+import re
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
 
-sentences = [
-    "Python é ótimo para ciência de dados",
-    "A linguagem Python é muito usada em IA",
-    "Futebol é um esporte popular",
-]
+def clean_text(text: str) -> str:
+    # Remove caracteres de controle (exceto newlines e tabs)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
 
-embeddings = model.encode(sentences)
-print(f"Shape: {embeddings.shape}")  # (3, 384)
-```
+    # Normaliza quebras de linha
+    text = re.sub(r"\r\n", "\n", text)
+    text = re.sub(r"\r", "\n", text)
 
-### Embeddings Multilinguais
+    # Colapsa mais de 2 linhas em branco consecutivas
+    text = re.sub(r"\n{3,}", "\n\n", text)
 
-Para aplicações em português:
+    lines = [l.rstrip() for l in text.splitlines()]
+    text = "\n".join(lines)
 
-```python
-# Modelos com bom suporte a português
-models_ptbr = [
-    "intfloat/multilingual-e5-large",   # bom para PT-BR
-    "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
-    "neuralmind/bert-base-portuguese-cased",  # apenas português
-]
+    return text.strip()
 
-from sentence_transformers import SentenceTransformer
-model = SentenceTransformer("intfloat/multilingual-e5-large")
 
-# Para e5, adicionar prefixo "query: " para consultas
-query = "query: O que é inteligência artificial?"
-doc = "passage: Inteligência artificial é a simulação da inteligência humana por máquinas."
-
-q_emb = model.encode(query)
-d_emb = model.encode(doc)
-print(cosine_similarity(q_emb, d_emb))  # alta similaridade
-```
-
-### Fine-tuning de Embeddings
-
-Para domínios específicos (jurídico, médico, técnico), você pode ajustar modelos de embedding:
-
-1. **Colete pares relevantes**: (query, documento_relevante, documento_irrelevante)
-2. **Use loss contrastiva**: InfoNCE, Triplet Loss, MNRL
-3. **Frameworks**: `sentence-transformers`, `FlagEmbedding`
-
----
-
-## 4.5 Similaridade entre Vetores
-
-### Similaridade de Cosseno
-
-A métrica mais comum para comparar embeddings de texto:
-
-```python
-import numpy as np
-
-def cosine_similarity(vec_a: list, vec_b: list) -> float:
-    """Retorna valor entre -1 e 1 (1 = idênticos, 0 = perpendiculares, -1 = opostos)."""
-    a, b = np.array(vec_a), np.array(vec_b)
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
-
-# Exemplo
-emb_gato   = get_embedding("gato")
-emb_felino = get_embedding("felino")
-emb_carro  = get_embedding("automóvel")
-emb_ia     = get_embedding("inteligência artificial")
-
-print(cosine_similarity(emb_gato, emb_felino))  # ~0.92 (muito similar)
-print(cosine_similarity(emb_gato, emb_carro))   # ~0.35 (pouco similar)
-print(cosine_similarity(emb_gato, emb_ia))      # ~0.15 (muito diferente)
-```
-
-### Distância Euclidiana
-
-```python
-def euclidean_distance(vec_a, vec_b) -> float:
-    return float(np.linalg.norm(np.array(vec_a) - np.array(vec_b)))
-```
-
-### Produto Interno (Dot Product)
-
-Para vetores normalizados (unitários), dot product = similaridade de cosseno. Muitos bancos vetoriais usam esta métrica por ser mais rápida de computar.
-
-### Busca Semântica
-
-A aplicação mais direta de embeddings:
-
-```python
-def semantic_search(query: str, documents: list[str], top_k: int = 3):
-    """Encontra os documentos mais relevantes para uma consulta."""
-    
-    # 1. Gera embeddings para todos os documentos
-    doc_embeddings = get_embeddings_batch(documents)
-    
-    # 2. Gera embedding da consulta
-    query_embedding = get_embedding(query)
-    
-    # 3. Calcula similaridade com cada documento
-    similarities = [
-        cosine_similarity(query_embedding, doc_emb)
-        for doc_emb in doc_embeddings
-    ]
-    
-    # 4. Ordena por similaridade e retorna top-k
-    ranked = sorted(
-        zip(similarities, documents),
-        key=lambda x: x[0],
-        reverse=True
-    )
-    
-    return ranked[:top_k]
-
-# Uso
-documents = [
-    "Python é uma linguagem de programação de alto nível",
-    "Machine Learning é um subcampo da IA",
-    "O Brasil tem 215 milhões de habitantes",
-    "Redes neurais aprendem padrões de dados",
-    "A Copa do Mundo é realizada a cada 4 anos",
-]
-
-results = semantic_search("Como funciona aprendizado de máquina?", documents)
-for score, doc in results:
-    print(f"{score:.3f} | {doc}")
-```
-
-**Saída esperada:**
-```
-0.847 | Machine Learning é um subcampo da IA
-0.831 | Redes neurais aprendem padrões de dados
-0.614 | Python é uma linguagem de programação de alto nível
+def is_content_too_short(text: str, min_chars: int = 100) -> bool:
+    """Descarta documentos que provavelmente são artefatos (headers, páginas em branco)."""
+    return len(text.strip()) < min_chars
 ```
 
 ---
 
-## 4.6 Chunking de Documentos
+## 5.3 Chunking: dividindo documentos para recuperação
 
-Documentos longos precisam ser divididos em pedaços (chunks) antes de gerar embeddings:
+Um documento de 50 páginas não pode ser recuperado como uma unidade — você não quer trazer 50 páginas para o contexto quando a pergunta só precisa de 2 parágrafos. Chunking é o processo de dividir documentos em pedaços recuperáveis.
+
+### Por que chunking importa: precisão de recuperação
+
+A granularidade do chunk determina dois trade-offs opostos:
+
+- **Chunk muito pequeno**: retrieval preciso, mas sem contexto suficiente para o modelo responder bem. Pior: pode dividir no meio de uma explicação.
+- **Chunk muito grande**: mais contexto, mas você traz ruído junto. O modelo pode ter dificuldade em focar na parte relevante.
+
+O tamanho ideal depende do domínio e do tipo de pergunta. Para FAQs técnicas, chunks de 256–512 tokens costumam funcionar bem. Para documentos legais ou científicos, 512–1024 tokens pode ser necessário.
+
+### Estratégias de chunking
 
 ```python
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
+import re
+
+
+def chunk_fixed_size(
+    text: str,
+    chunk_size: int = 512,
+    overlap: int = 64,
+) -> list[str]:
     """
-    Divide texto em chunks com sobreposição para preservar contexto.
-    
-    chunk_size: tamanho em caracteres de cada chunk
-    overlap: sobreposição entre chunks consecutivos
+    Divide por número de caracteres com overlap.
+    Simples e previsível. Bom ponto de partida.
     """
     chunks = []
     start = 0
-    
     while start < len(text):
         end = start + chunk_size
-        chunk = text[start:end]
-        
-        # Tenta quebrar em limite de palavra/parágrafo
-        if end < len(text):
-            last_space = chunk.rfind(" ")
-            if last_space > chunk_size * 0.7:  # não muito pequeno
-                chunk = chunk[:last_space]
-                end = start + last_space
-        
-        chunks.append(chunk.strip())
-        start = end - overlap
-    
-    return [c for c in chunks if len(c) > 50]  # remove chunks muito pequenos
-
-# Chunking por parágrafo (geralmente melhor)
-def chunk_by_paragraph(text: str, max_chars: int = 1000) -> list[str]:
-    paragraphs = text.split("\n\n")
-    chunks = []
-    current_chunk = ""
-    
-    for para in paragraphs:
-        if len(current_chunk) + len(para) < max_chars:
-            current_chunk += para + "\n\n"
-        else:
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            current_chunk = para + "\n\n"
-    
-    if current_chunk:
-        chunks.append(current_chunk.strip())
-    
+        chunks.append(text[start:end])
+        start += chunk_size - overlap
     return chunks
+
+
+def chunk_by_paragraph(
+    text: str,
+    max_chunk_size: int = 1000,
+    overlap_paragraphs: int = 1,
+) -> list[str]:
+    """
+    Divide por parágrafos (linhas em branco).
+    Respeita estrutura semântica do texto.
+    """
+    paragraphs = [p.strip() for p in re.split(r"\n\n+", text) if p.strip()]
+
+    chunks = []
+    current_chunk_paragraphs = []
+    current_size = 0
+
+    for para in paragraphs:
+        para_size = len(para)
+
+        if current_size + para_size > max_chunk_size and current_chunk_paragraphs:
+            chunks.append("\n\n".join(current_chunk_paragraphs))
+            # Overlap: mantém últimos N parágrafos
+            current_chunk_paragraphs = current_chunk_paragraphs[-overlap_paragraphs:]
+            current_size = sum(len(p) for p in current_chunk_paragraphs)
+
+        current_chunk_paragraphs.append(para)
+        current_size += para_size
+
+    if current_chunk_paragraphs:
+        chunks.append("\n\n".join(current_chunk_paragraphs))
+
+    return chunks
+
+
+def chunk_by_sentence(
+    text: str,
+    sentences_per_chunk: int = 5,
+    overlap_sentences: int = 1,
+) -> list[str]:
+    """Divide por sentenças. Bom para textos contínuos."""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    chunks = []
+    step = sentences_per_chunk - overlap_sentences
+    for i in range(0, len(sentences), step):
+        chunk_sentences = sentences[i : i + sentences_per_chunk]
+        if chunk_sentences:
+            chunks.append(" ".join(chunk_sentences))
+
+    return chunks
+
+
+def chunk_markdown_by_heading(
+    text: str,
+    max_chunk_size: int = 1500,
+) -> list[dict]:
+    """
+    Divide Markdown por cabeçalhos.
+    Preserva estrutura hierárquica e retorna metadados de seção.
+    """
+    lines = text.splitlines()
+    chunks = []
+    current_section = {"heading": "", "level": 0, "content": []}
+
+    for line in lines:
+        heading_match = re.match(r"^(#{1,6})\s+(.*)", line)
+        if heading_match:
+            if current_section["content"]:
+                content = "\n".join(current_section["content"]).strip()
+                if content:
+                    chunks.append({
+                        "content": content,
+                        "heading": current_section["heading"],
+                        "heading_level": current_section["level"],
+                    })
+            level = len(heading_match.group(1))
+            heading = heading_match.group(2)
+            current_section = {"heading": heading, "level": level, "content": [line]}
+        else:
+            current_section["content"].append(line)
+
+    if current_section["content"]:
+        content = "\n".join(current_section["content"]).strip()
+        if content:
+            chunks.append({
+                "content": content,
+                "heading": current_section["heading"],
+                "heading_level": current_section["level"],
+            })
+
+    # Chunks grandes demais são subdivididos
+    final_chunks = []
+    for chunk in chunks:
+        if len(chunk["content"]) > max_chunk_size:
+            sub_chunks = chunk_by_paragraph(chunk["content"], max_chunk_size)
+            for sub in sub_chunks:
+                final_chunks.append({**chunk, "content": sub})
+        else:
+            final_chunks.append(chunk)
+
+    return final_chunks
 ```
 
-### Chunking Hierárquico
+### O trade-off de tamanho de chunk
 
-```python
-# Armazena tanto chunks pequenos (precisos) quanto grandes (contextuais)
-# Recupera pelo chunk pequeno, envia o grande ao LLM
-def hierarchical_chunk(document: str):
-    # Chunks pequenos para busca precisa
-    small_chunks = chunk_text(document, size=200)
-    # Chunks grandes para contexto rico
-    large_chunks = chunk_text(document, size=1000)
-    
-    return small_chunks, large_chunks
-```
+| Tamanho | Tokens aprox. | Vantagem | Desvantagem |
+|---------|---------------|----------|-------------|
+| Pequeno | 128–256 | Alta precisão de retrieval | Contexto insuficiente, fragmentação |
+| Médio | 512–768 | Equilíbrio | Ponto de partida recomendado |
+| Grande | 1024–2048 | Contexto rico | Ruído, custo de embedding maior |
 
-### Chunking Semântico
-
-```python
-# Divide o texto em pontos de mudança semântica
-from semantic_text_splitter import TextSplitter
-
-splitter = TextSplitter.from_huggingface_tokenizer("gpt2", capacity=512)
-chunks = splitter.chunks(document)
-```
+**Dica de produção:** comece com 512 tokens e overlap de 10%. Meça a qualidade do retrieval (Seção 5.7) e ajuste baseado em dados reais, não em intuição.
 
 ---
 
-## 4.7 Por que Bancos Vetoriais?
+## 5.4 Embeddings: escolha do modelo
 
-Você já sabe gerar embeddings e calcular similaridade. Mas e quando você tem:
-- 1 milhão de documentos?
-- 100 usuários simultâneos fazendo buscas?
-- Necessidade de atualizar documentos?
+Embedding é a representação vetorial do texto. A qualidade desse vetor determina se a busca semântica vai funcionar.
 
-Fazer busca por força bruta (comparar a query com todos os vetores) fica inviável em escala. Os **bancos de dados vetoriais** resolvem isso.
+### Critérios de escolha
 
-> **Definição:** Um banco de dados vetorial é um sistema otimizado para armazenar, indexar e buscar vetores de alta dimensão de forma eficiente e escalável.
+| Critério | O que considerar |
+|----------|-----------------|
+| **Qualidade** | Performance em benchmarks (MTEB) para o seu idioma e domínio |
+| **Idioma** | Modelos multilíngues vs. específicos para PT-BR |
+| **Dimensão** | Mais dimensões = mais qualidade (geralmente), mas mais custo de armazenamento |
+| **Custo** | Por token (comercial) vs. custo de infraestrutura (self-hosted) |
+| **Latência** | Crítico se o embedding acontece em tempo real na query |
 
----
+### Modelos disponíveis
 
-## 4.8 Busca Aproximada de Vizinhos (ANN)
+| Modelo | Tipo | Dimensão | Notas PT-BR |
+|--------|------|----------|-------------|
+| `text-embedding-3-small` | OpenAI (pago) | 1536 | Bom, mas pago por token |
+| `text-embedding-3-large` | OpenAI (pago) | 3072 | Melhor qualidade, mais caro |
+| `all-MiniLM-L6-v2` | Open-source | 384 | Leve, foco em inglês |
+| `nomic-embed-text-v1` | Open-source | 768 | Multilíngue, boa qualidade |
+| `BAAI/bge-m3` | Open-source | 1024 | Excelente multilíngue, inclui PT-BR |
+| `intfloat/multilingual-e5-large` | Open-source | 1024 | Forte em PT-BR |
 
-Em vez de busca exata (comparar com todos), os bancos vetoriais usam algoritmos de **busca aproximada (ANN - Approximate Nearest Neighbor)**:
+Para projetos em Português, `BAAI/bge-m3` ou `multilingual-e5-large` são as escolhas mais seguras no cenário open-source.
 
-### HNSW (Hierarchical Navigable Small World)
-
-O algoritmo mais popular:
-- Cria um grafo hierárquico de vizinhança
-- Navega do nível mais alto (sparse) ao mais baixo (denso)
-- Muito eficiente para alta dimensionalidade
-
-### IVF (Inverted File Index)
-
-- Clusteriza vetores em grupos (Voronoi cells)
-- Na busca, examina apenas os clusters mais próximos
-- Bom para datasets muito grandes
-
-### ScaNN, Annoy, FAISS
-
-Outros algoritmos com diferentes trade-offs entre velocidade, precisão e memória.
-
----
-
-## 4.9 Principais Bancos Vetoriais
-
-### Comparativo
-
-| Banco | Tipo | Hospedagem | Destaques |
-|-------|------|-----------|-----------|
-| **ChromaDB** | Open-source | Local / Cloud | Simples, ideal para dev |
-| **FAISS** | Biblioteca | Local | Ultra-rápido, Meta |
-| **Pinecone** | SaaS | Cloud | Gerenciado, escalável |
-| **Weaviate** | Open-source | Local / Cloud | Schema flexível, GraphQL |
-| **Qdrant** | Open-source | Local / Cloud | Alta performance, filtros |
-| **Milvus** | Open-source | Local / Cloud | Enterprise, Kubernetes |
-| **pgvector** | Extensão | PostgreSQL | Se já usa PostgreSQL |
-
-### FAISS — Alta Performance Local
-
-```bash
-pip install faiss-cpu  # CPU
-# pip install faiss-gpu  # GPU (requer CUDA)
-```
+### Implementação com caching
 
 ```python
-import faiss
-import numpy as np
-
-# Simulando embeddings de 1536 dimensões
-dimension = 1536
-n_docs = 10000
-
-# Criar índice HNSW
-index = faiss.IndexHNSWFlat(dimension, 32)  # 32 = número de vizinhos no grafo
-
-# Adicionar vetores (deve ser float32)
-vectors = np.random.rand(n_docs, dimension).astype(np.float32)
-faiss.normalize_L2(vectors)  # normalizar para similaridade de cosseno
-index.add(vectors)
-
-# Buscar
-query = np.random.rand(1, dimension).astype(np.float32)
-faiss.normalize_L2(query)
-
-distances, indices = index.search(query, k=5)
-print(f"Índices mais próximos: {indices[0]}")
-print(f"Distâncias: {distances[0]}")
-
-# Salvar e carregar
-faiss.write_index(index, "meu_index.faiss")
-index = faiss.read_index("meu_index.faiss")
-```
-
-### pgvector — Vetores no PostgreSQL
-
-Para quem já usa PostgreSQL, pgvector adiciona suporte nativo a vetores:
-
-```sql
--- Habilitar extensão
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- Criar tabela com coluna vetorial
-CREATE TABLE documentos (
-    id SERIAL PRIMARY KEY,
-    conteudo TEXT,
-    embedding vector(1536),
-    metadata JSONB,
-    criado_em TIMESTAMP DEFAULT NOW()
-);
-
--- Criar índice HNSW
-CREATE INDEX ON documentos USING hnsw (embedding vector_cosine_ops);
-
--- Inserir documento com embedding (em Python)
--- INSERT INTO documentos (conteudo, embedding) VALUES ($1, $2::vector)
-
--- Buscar os 5 mais similares
-SELECT id, conteudo, 1 - (embedding <=> query_embedding) AS similaridade
-FROM documentos
-ORDER BY embedding <=> '[0.1, 0.2, ...]'::vector
-LIMIT 5;
-```
-
-```python
-# Python com psycopg2
-import psycopg2
+import hashlib
 import json
+import logging
+from pathlib import Path
+from typing import Optional
 
-conn = psycopg2.connect("postgresql://user:pass@localhost/db")
-cur = conn.cursor()
+logger = logging.getLogger(__name__)
 
-# Inserir
-embedding = get_embedding("texto do documento")
-cur.execute(
-    "INSERT INTO documentos (conteudo, embedding) VALUES (%s, %s)",
-    ("texto do documento", embedding)
-)
 
-# Buscar
-query_emb = get_embedding("minha consulta")
-cur.execute("""
-    SELECT conteudo, 1 - (embedding <=> %s::vector) AS score
-    FROM documentos
-    ORDER BY embedding <=> %s::vector
-    LIMIT 5
-""", (query_emb, query_emb))
+class EmbeddingCache:
+    """Cache simples em disco para embeddings. Evita reprocessar o mesmo texto."""
 
-for row in cur.fetchall():
-    print(f"{row[1]:.3f} | {row[0]}")
+    def __init__(self, cache_dir: str = ".embedding_cache"):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+        self._hits = 0
+        self._misses = 0
+
+    def _key(self, text: str, model: str) -> str:
+        payload = f"{model}:{text}"
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def get(self, text: str, model: str) -> Optional[list[float]]:
+        path = self.cache_dir / f"{self._key(text, model)}.json"
+        if path.exists():
+            self._hits += 1
+            return json.loads(path.read_text())
+        self._misses += 1
+        return None
+
+    def set(self, text: str, model: str, embedding: list[float]) -> None:
+        path = self.cache_dir / f"{self._key(text, model)}.json"
+        path.write_text(json.dumps(embedding))
+
+    @property
+    def hit_rate(self) -> float:
+        total = self._hits + self._misses
+        return self._hits / total if total > 0 else 0.0
+
+
+class EmbeddingService:
+    def __init__(
+        self,
+        model_name: str = "BAAI/bge-m3",
+        use_openai: bool = False,
+        cache_dir: str = ".embedding_cache",
+        batch_size: int = 32,
+    ):
+        self.model_name = model_name
+        self.use_openai = use_openai
+        self.batch_size = batch_size
+        self.cache = EmbeddingCache(cache_dir)
+        self._model = None
+
+    def _load_model(self):
+        if self._model is not None:
+            return
+        if self.use_openai:
+            from openai import OpenAI
+            self._model = OpenAI()
+        else:
+            from sentence_transformers import SentenceTransformer
+            logger.info(f"Carregando modelo {self.model_name}...")
+            self._model = SentenceTransformer(self.model_name)
+            logger.info("Modelo carregado.")
+
+    def embed_text(self, text: str) -> list[float]:
+        cached = self.cache.get(text, self.model_name)
+        if cached is not None:
+            return cached
+
+        self._load_model()
+
+        if self.use_openai:
+            response = self._model.embeddings.create(
+                input=text,
+                model=self.model_name,
+            )
+            embedding = response.data[0].embedding
+        else:
+            embedding = self._model.encode(text, normalize_embeddings=True).tolist()
+
+        self.cache.set(text, self.model_name, embedding)
+        return embedding
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        results = [None] * len(texts)
+        uncached_indices = []
+
+        for i, text in enumerate(texts):
+            cached = self.cache.get(text, self.model_name)
+            if cached is not None:
+                results[i] = cached
+            else:
+                uncached_indices.append(i)
+
+        if not uncached_indices:
+            return results
+
+        self._load_model()
+        uncached_texts = [texts[i] for i in uncached_indices]
+
+        new_embeddings = []
+        for start in range(0, len(uncached_texts), self.batch_size):
+            batch = uncached_texts[start : start + self.batch_size]
+            if self.use_openai:
+                response = self._model.embeddings.create(
+                    input=batch,
+                    model=self.model_name,
+                )
+                batch_embeddings = [d.embedding for d in response.data]
+            else:
+                batch_embeddings = self._model.encode(
+                    batch, normalize_embeddings=True
+                ).tolist()
+            new_embeddings.extend(batch_embeddings)
+
+        for idx, embedding in zip(uncached_indices, new_embeddings):
+            self.cache.set(texts[idx], self.model_name, embedding)
+            results[idx] = embedding
+
+        logger.info(
+            f"Cache hit rate: {self.cache.hit_rate:.1%} "
+            f"({self.cache._hits} hits, {self.cache._misses} misses)"
+        )
+        return results
 ```
-
-### Filtragem com Metadados
-
-Um diferencial importante dos bancos vetoriais é combinar **busca vetorial + filtros de metadados**:
-
-```python
-# ChromaDB com filtros
-results = collection.query(
-    query_texts=["como aprender machine learning?"],
-    n_results=3,
-    where={"categoria": "ia"}  # filtro de metadado
-)
-
-# Filtros mais complexos
-results = collection.query(
-    query_texts=["consulta"],
-    where={
-        "$and": [
-            {"categoria": {"$in": ["ia", "dados"]}},
-            {"dificuldade": {"$ne": "alta"}}
-        ]
-    }
-)
-```
-
-### Boas Práticas para Bancos Vetoriais
-
-| Prática | Motivo |
-|---------|--------|
-| Normalizar vetores | Garante consistência na similaridade de cosseno |
-| Chunk cuidadoso | Chunks muito pequenos perdem contexto; muito grandes perdem precisão |
-| Metadados ricos | Permitem filtragem eficiente sem vetorização |
-| Monitorar qualidade | Avalie a relevância dos resultados periodicamente |
-| Backup regular | Especialmente para bancos persistentes |
-| Índice correto | HNSW para alta precisão; IVF para datasets gigantes |
 
 ---
 
-## 4.10 ChromaDB — Início Rápido
+## 5.5 Bancos de dados vetoriais
 
-ChromaDB é a escolha ideal para aprender e prototipar:
+O banco de dados vetorial armazena seus chunks e seus embeddings, e permite busca por similaridade.
 
-```bash
-pip install chromadb
-```
+### Opções e quando usar cada uma
 
-### Operações Básicas
+| Banco | Tipo | Escala | Complexidade operacional | Filtragem de metadados |
+|-------|------|--------|--------------------------|------------------------|
+| **ChromaDB** | Self-hosted / embarcado | Pequena-média | Baixa (Python puro) | Sim, básica |
+| **Qdrant** | Self-hosted / cloud | Média-grande | Média | Excelente |
+| **FAISS** | Biblioteca (sem servidor) | Qualquer (memória) | Baixa | Não nativa |
+| **Pinecone** | Cloud gerenciado | Qualquer | Baixa (SaaS) | Sim |
+| **Weaviate** | Self-hosted / cloud | Média-grande | Alta | Excelente |
+| **pgvector** | PostgreSQL extensão | Média | Média | SQL completo |
 
-```python
-import chromadb
+**Para projetos iniciantes e médios:** ChromaDB é a escolha certa. Zero infra, Python puro, funciona localmente.  
+**Para produção séria:** Qdrant (self-hosted) ou Pinecone (managed). pgvector se você já usa Postgres.
 
-# Iniciar cliente (dados em memória)
-client = chromadb.Client()
+### Filtragem de metadados: tão importante quanto busca semântica
 
-# Para persistir em disco:
-client = chromadb.PersistentClient(path="./meu_banco")
+Em produção, raramente você busca em *todos* os documentos. Você busca em documentos de um cliente específico, de um período, de uma categoria. Metadados bem planejados são a diferença entre um RAG genérico e um RAG útil.
 
-# Criar uma coleção
-collection = client.create_collection(
-    name="documentos",
-    metadata={"hnsw:space": "cosine"}  # métrica de distância
-)
-
-# Adicionar documentos
-collection.add(
-    documents=[
-        "Python é uma linguagem de alto nível",
-        "Machine Learning é uma área da IA",
-        "JavaScript é usado para web",
-        "RAG combina recuperação com geração",
-    ],
-    ids=["doc1", "doc2", "doc3", "doc4"],
-    metadatas=[
-        {"categoria": "linguagem", "dificuldade": "baixa"},
-        {"categoria": "ia", "dificuldade": "alta"},
-        {"categoria": "linguagem", "dificuldade": "media"},
-        {"categoria": "ia", "dificuldade": "alta"},
-    ]
-)
-
-print(f"Total de documentos: {collection.count()}")
-```
-
-### Busca Semântica
+### ChromaDB: operações CRUD com metadados
 
 ```python
-# ChromaDB gera embeddings automaticamente (usa modelo embutido)
-results = collection.query(
-    query_texts=["como aprender inteligência artificial?"],
-    n_results=2
-)
+import chromadb  # pip install chromadb
+from chromadb.config import Settings
+import uuid
 
-for doc, score, meta in zip(
-    results["documents"][0],
-    results["distances"][0],
-    results["metadatas"][0]
-):
-    print(f"[{score:.3f}] {doc} | {meta}")
-```
 
-### Usando Embeddings Próprios
-
-```python
-import chromadb
-from openai import OpenAI
-
-openai_client = OpenAI()
-
-def embed(texts):
-    response = openai_client.embeddings.create(
-        input=texts,
-        model="text-embedding-3-small"
+def create_chroma_client(persist_dir: str = ".chroma_db") -> chromadb.Client:
+    return chromadb.PersistentClient(
+        path=persist_dir,
+        settings=Settings(anonymized_telemetry=False),
     )
-    return [item.embedding for item in response.data]
 
-# Configurar ChromaDB com função de embedding customizada
-class OpenAIEmbeddingFunction(chromadb.EmbeddingFunction):
-    def __call__(self, input):
-        return embed(input)
 
-collection = client.create_collection(
-    name="docs_openai",
-    embedding_function=OpenAIEmbeddingFunction()
-)
-```
-
-### Padrões de Uso
-
-#### Padrão: Index-then-Query
-
-```python
-# FASE 1: Indexação (feita uma vez ou periodicamente)
-def index_documents(documents: list[dict]):
-    texts = [doc["content"] for doc in documents]
-    ids = [doc["id"] for doc in documents]
-    metadatas = [doc["metadata"] for doc in documents]
-    
-    collection.add(documents=texts, ids=ids, metadatas=metadatas)
-
-# FASE 2: Consulta (feita por cada usuário/request)
-def search(query: str, filters: dict = None, top_k: int = 5):
-    return collection.query(
-        query_texts=[query],
-        n_results=top_k,
-        where=filters
+def get_or_create_collection(
+    client: chromadb.Client,
+    name: str,
+    embedding_function=None,
+) -> chromadb.Collection:
+    return client.get_or_create_collection(
+        name=name,
+        embedding_function=embedding_function,
+        metadata={"hnsw:space": "cosine"},
     )
-```
 
-#### Padrão: Upsert (atualizar ou inserir)
 
-```python
-# Evita duplicatas ao reindexar documentos atualizados
-collection.upsert(
-    documents=["novo conteúdo do documento"],
-    ids=["doc1"],  # se já existe, atualiza
-    metadatas=[{"versao": 2}]
-)
-```
+def index_chunks(
+    collection: chromadb.Collection,
+    chunks: list[str],
+    metadatas: list[dict],
+    embeddings: list[list[float]],
+    ids: list[str] = None,
+) -> None:
+    if ids is None:
+        ids = [str(uuid.uuid4()) for _ in chunks]
 
----
-
-## 4.11 O que é RAG?
-
-**RAG (Retrieval Augmented Generation)** é uma arquitetura que combina:
-1. **Recuperação** de informações relevantes de uma base de conhecimento
-2. **Geração** de resposta usando um LLM com esse contexto recuperado
-
-> **Problema que resolve:** LLMs têm conhecimento estático (data de corte de treinamento) e não conhecem seus dados específicos (documentos internos, bases de dados privadas).
-
-```
-Sem RAG:
-Usuário → "Qual é a política de férias da empresa?" → LLM → "Não tenho essa informação"
-
-Com RAG:
-Usuário → "Qual é a política de férias?" 
-    → Busca em documentos da empresa
-    → Encontra: "Art. 3: Colaboradores têm 30 dias de férias por ano..."
-    → LLM recebe o contexto + pergunta
-    → "Segundo a política da empresa, você tem direito a 30 dias de férias..."
-```
-
----
-
-## 4.12 Arquitetura RAG
-
-```
-[Documentos] → [Chunking] → [Embedding] → [Banco Vetorial]
-                                                    ↑
-[Usuário] → [Query] → [Embedding da Query] → [Busca ANN]
-                                                    ↓
-                                         [Chunks Relevantes]
-                                                    ↓
-                                    [Prompt = Query + Contexto]
-                                                    ↓
-                                              [LLM]
-                                                    ↓
-                                             [Resposta]
-```
-
-### Duas Fases
-
-**Fase 1 — Indexação** (feita uma vez ou periodicamente):
-1. Carregamento dos documentos
-2. Chunking (divisão em pedaços)
-3. Geração de embeddings
-4. Armazenamento no banco vetorial
-
-**Fase 2 — Consulta** (feita a cada pergunta):
-1. Geração do embedding da pergunta
-2. Busca dos chunks mais relevantes
-3. Construção do prompt com contexto
-4. Geração da resposta pelo LLM
-
-### Avaliação de RAG
-
-#### Métricas Principais
-
-| Métrica | Descrição |
-|---------|-----------|
-| **Faithfulness** | A resposta é fiel ao contexto recuperado? |
-| **Answer Relevancy** | A resposta é relevante para a pergunta? |
-| **Context Recall** | Os documentos relevantes foram recuperados? |
-| **Context Precision** | Os documentos recuperados são realmente relevantes? |
-
-#### Framework RAGAS
-
-```bash
-pip install ragas
-```
-
-```python
-from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy, context_precision
-
-# Dados de avaliação
-test_data = {
-    "question": ["Quantos dias de férias tenho?"],
-    "answer": ["Você tem direito a 30 dias de férias anuais."],
-    "contexts": [["Política de Férias: 30 dias anuais após 12 meses"]],
-    "ground_truth": ["30 dias por ano"]
-}
-
-result = evaluate(
-    dataset=test_data,
-    metrics=[faithfulness, answer_relevancy, context_precision]
-)
-print(result)
-```
-
----
-
-## 4.13 RAG Simples — Implementação do Zero
-
-```python
-from openai import OpenAI
-import chromadb
-import os
-
-client = OpenAI()
-chroma_client = chromadb.Client()
-collection = chroma_client.create_collection("knowledge_base", 
-                                              metadata={"hnsw:space": "cosine"})
-
-# ============================================================
-# FASE 1: INDEXAÇÃO
-# ============================================================
-
-def load_and_index(documents: list[dict]):
-    """
-    documents: lista de {"id": str, "content": str, "source": str}
-    """
-    texts = [d["content"] for d in documents]
-    ids = [d["id"] for d in documents]
-    metadatas = [{"source": d["source"]} for d in documents]
-    
-    # Gerar embeddings em lote
-    response = client.embeddings.create(
-        input=texts,
-        model="text-embedding-3-small"
-    )
-    embeddings = [item.embedding for item in response.data]
-    
-    collection.add(
-        embeddings=embeddings,
-        documents=texts,
+    collection.upsert(
         ids=ids,
-        metadatas=metadatas
+        documents=chunks,
+        embeddings=embeddings,
+        metadatas=metadatas,
     )
-    print(f"✅ {len(documents)} documentos indexados")
+    print(f"{len(chunks)} chunks indexados.")
 
-# Documentos de exemplo
-docs = [
-    {"id": "politica_ferias", "source": "rh.pdf",
-     "content": "Política de Férias: Todos os colaboradores têm direito a 30 dias de férias anuais após 12 meses de trabalho."},
-    {"id": "politica_home", "source": "rh.pdf", 
-     "content": "Home Office: Colaboradores podem trabalhar remotamente até 3 dias por semana mediante aprovação do gestor."},
-    {"id": "beneficios", "source": "rh.pdf",
-     "content": "Benefícios: Vale alimentação R$600/mês, plano de saúde Unimed, gympass categoria prata."},
-    {"id": "horario", "source": "rh.pdf",
-     "content": "Horário de trabalho: 8h às 17h com 1h de almoço. Banco de horas disponível."},
-]
 
-load_and_index(docs)
-
-# ============================================================
-# FASE 2: CONSULTA
-# ============================================================
-
-def rag_query(user_question: str, top_k: int = 3) -> str:
-    """Pipeline RAG completo."""
-    
-    # 1. Embedding da pergunta
-    query_response = client.embeddings.create(
-        input=user_question,
-        model="text-embedding-3-small"
-    )
-    query_embedding = query_response.data[0].embedding
-    
-    # 2. Buscar chunks relevantes
+def search(
+    collection: chromadb.Collection,
+    query_embedding: list[float],
+    n_results: int = 5,
+    where: dict = None,
+) -> list[dict]:
+    """
+    Exemplo de where para filtragem:
+      where={"source": "manual_produto_v2.pdf"}
+      where={"$and": [{"category": "legal"}, {"year": {"$gte": 2023}}]}
+    """
     results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=top_k
+        n_results=n_results,
+        where=where,
+        include=["documents", "metadatas", "distances"],
     )
-    
-    retrieved_docs = results["documents"][0]
-    sources = [m.get("source", "?") for m in results["metadatas"][0]]
-    
-    # 3. Construir contexto
-    context = "\n\n".join([
-        f"[Fonte: {src}]\n{doc}" 
-        for doc, src in zip(retrieved_docs, sources)
-    ])
-    
-    # 4. Prompt com contexto
-    prompt = f"""Use APENAS as informações do contexto abaixo para responder.
-Se a resposta não estiver no contexto, diga "Não encontrei essa informação nos documentos."
 
-CONTEXTO:
-{context}
+    chunks = []
+    for doc, meta, dist in zip(
+        results["documents"][0],
+        results["metadatas"][0],
+        results["distances"][0],
+    ):
+        chunks.append({
+            "content": doc,
+            "metadata": meta,
+            "distance": dist,
+            "score": 1 - dist,
+        })
 
-PERGUNTA: {user_question}
+    return chunks
 
-RESPOSTA:"""
-    
-    # 5. Gerar resposta
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "Você é um assistente de RH preciso e direto."},
-            {"role": "user", "content": prompt}
+
+def delete_by_source(collection: chromadb.Collection, source: str) -> None:
+    results = collection.get(where={"source": source})
+    if results["ids"]:
+        collection.delete(ids=results["ids"])
+        print(f"Removidos {len(results['ids'])} chunks de '{source}'")
+
+
+# Exemplo de uso
+if __name__ == "__main__":
+    client = create_chroma_client()
+    collection = get_or_create_collection(client, "documentos_empresa")
+
+    chunks = [
+        "A política de férias permite 30 dias corridos por ano.",
+        "Benefícios incluem plano de saúde e vale-refeição de R$ 35/dia.",
+        "O período de experiência é de 90 dias conforme CLT.",
+    ]
+    metadatas = [
+        {"source": "rh_politicas.pdf", "category": "rh", "year": 2024},
+        {"source": "rh_beneficios.pdf", "category": "rh", "year": 2024},
+        {"source": "contratos_modelo.pdf", "category": "juridico", "year": 2023},
+    ]
+    # Embeddings reais seriam gerados pelo EmbeddingService
+    embeddings = [[0.1] * 384] * 3
+
+    index_chunks(collection, chunks, metadatas, embeddings)
+
+    query_emb = [0.1] * 384
+    results = search(
+        collection,
+        query_emb,
+        n_results=3,
+        where={"category": "rh"},
+    )
+    for r in results:
+        print(f"Score: {r['score']:.3f} | {r['content'][:80]}")
+```
+
+---
+
+## 5.6 Recuperação: dense, sparse e híbrida
+
+### Dense retrieval (busca semântica)
+
+Usa embeddings. Encontra documentos *semanticamente similares* mesmo com palavras diferentes. "Carro" encontra "automóvel". Ótimo para linguagem natural e variações de vocabulário.
+
+**Limitação:** péssimo para termos técnicos específicos, números, códigos de produto, nomes próprios. "CVE-2024-1234" vai se perder em embedding semântico.
+
+### Sparse retrieval (BM25)
+
+Algoritmo clássico baseado em frequência de termos. Excelente para *correspondência exata de palavras-chave*. Ainda é amplamente usado em mecanismos de busca tradicionais.
+
+**Limitação:** não entende sinônimos ou variações semânticas.
+
+### Híbrida: o melhor dos dois mundos
+
+Em produção, a maioria dos sistemas sérios usa busca híbrida: combina os scores de dense e sparse para obter melhores resultados.
+
+```python
+import math
+
+
+class BM25Simple:
+    """Implementação minimalista de BM25 para demonstração."""
+
+    def __init__(self, k1: float = 1.5, b: float = 0.75):
+        self.k1 = k1
+        self.b = b
+        self.docs: list[list[str]] = []
+        self.idf: dict[str, float] = {}
+        self.avg_dl: float = 0.0
+
+    def fit(self, documents: list[str]) -> None:
+        self.docs = [doc.lower().split() for doc in documents]
+        N = len(self.docs)
+        self.avg_dl = sum(len(d) for d in self.docs) / N if N > 0 else 0
+
+        df: dict[str, int] = {}
+        for doc in self.docs:
+            for term in set(doc):
+                df[term] = df.get(term, 0) + 1
+
+        self.idf = {
+            term: math.log((N - freq + 0.5) / (freq + 0.5) + 1)
+            for term, freq in df.items()
+        }
+
+    def score(self, query: str, doc_idx: int) -> float:
+        terms = query.lower().split()
+        doc = self.docs[doc_idx]
+        dl = len(doc)
+        score = 0.0
+
+        term_freq: dict[str, int] = {}
+        for term in doc:
+            term_freq[term] = term_freq.get(term, 0) + 1
+
+        for term in terms:
+            if term not in self.idf:
+                continue
+            tf = term_freq.get(term, 0)
+            numerator = tf * (self.k1 + 1)
+            denominator = tf + self.k1 * (1 - self.b + self.b * dl / self.avg_dl)
+            score += self.idf[term] * (numerator / denominator)
+
+        return score
+
+    def search(self, query: str, n: int = 10) -> list[tuple[int, float]]:
+        scores = [(i, self.score(query, i)) for i in range(len(self.docs))]
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:n]
+
+
+def hybrid_search(
+    query: str,
+    documents: list[str],
+    dense_scores: list[float],
+    bm25: BM25Simple,
+    n_results: int = 5,
+    alpha: float = 0.5,
+) -> list[dict]:
+    """
+    Combina scores dense e sparse com normalização min-max.
+    alpha=0: só sparse, alpha=1: só dense.
+    """
+    sparse_results = bm25.search(query, n=len(documents))
+    sparse_score_map = {idx: score for idx, score in sparse_results}
+
+    def normalize(scores: list[float]) -> list[float]:
+        min_s, max_s = min(scores), max(scores)
+        if max_s == min_s:
+            return [0.5] * len(scores)
+        return [(s - min_s) / (max_s - min_s) for s in scores]
+
+    dense_norm = normalize(dense_scores)
+    all_sparse = [sparse_score_map.get(i, 0.0) for i in range(len(documents))]
+    sparse_norm = normalize(all_sparse)
+
+    results = []
+    for i, doc in enumerate(documents):
+        hybrid_score = alpha * dense_norm[i] + (1 - alpha) * sparse_norm[i]
+        results.append({
+            "doc_idx": i,
+            "content": doc,
+            "hybrid_score": hybrid_score,
+            "dense_score": dense_norm[i],
+            "sparse_score": sparse_norm[i],
+        })
+
+    results.sort(key=lambda x: x["hybrid_score"], reverse=True)
+    return results[:n_results]
+```
+
+### Reranking: refinando os top-K resultados
+
+Após retrieval, um cross-encoder pode re-ranquear os top-K resultados com mais precisão. Cross-encoders são mais lentos mas mais precisos que bi-encoders.
+
+```python
+def rerank_with_cross_encoder(
+    query: str,
+    candidates: list[str],
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    top_k: int = 3,
+) -> list[tuple[str, float]]:
+    from sentence_transformers import CrossEncoder
+
+    model = CrossEncoder(model_name)
+    pairs = [(query, candidate) for candidate in candidates]
+    scores = model.predict(pairs)
+
+    ranked = sorted(
+        zip(candidates, scores),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    return ranked[:top_k]
+```
+
+O fluxo completo: retrieval amplo (top-20) → reranking cross-encoder → top-3/5 para o LLM. Isso melhora significativamente a qualidade sem explodir o contexto.
+
+---
+
+## 5.7 Avaliação do pipeline RAG
+
+Você não pode melhorar o que não mede. Avaliação de RAG acontece em duas camadas: qualidade do retrieval e qualidade da resposta.
+
+### Métricas de retrieval
+
+| Métrica | O que mede | Como calcular |
+|---------|-----------|---------------|
+| **Precision@K** | Dos K chunks retornados, quantos são relevantes? | `relevantes_entre_K / K` |
+| **Recall@K** | Dos chunks relevantes existentes, quantos foram recuperados? | `recuperados_relevantes / total_relevantes` |
+| **MRR** | Qual a posição média do primeiro resultado relevante? | `1 / posição_do_primeiro_relevante` |
+
+### Ragas: avaliação end-to-end automatizada
+
+```python
+# pip install ragas datasets
+from ragas import evaluate
+from ragas.metrics import (
+    faithfulness,
+    answer_relevancy,
+    context_precision,
+    context_recall,
+)
+from datasets import Dataset
+
+
+def evaluate_rag_pipeline(
+    questions: list[str],
+    answers: list[str],
+    contexts: list[list[str]],
+    ground_truths: list[str],
+) -> dict:
+    """
+    questions:     perguntas do usuário
+    answers:       respostas geradas pelo LLM
+    contexts:      chunks recuperados para cada pergunta (lista de listas)
+    ground_truths: respostas corretas de referência
+    """
+    dataset = Dataset.from_dict({
+        "question": questions,
+        "answer": answers,
+        "contexts": contexts,
+        "ground_truth": ground_truths,
+    })
+
+    result = evaluate(
+        dataset,
+        metrics=[
+            faithfulness,        # resposta é suportada pelo contexto?
+            answer_relevancy,    # resposta é relevante à pergunta?
+            context_precision,   # contexto recuperado é preciso?
+            context_recall,      # contexto captura o que é necessário?
         ],
-        temperature=0
     )
-    
-    return response.choices[0].message.content
 
-# Testar
-print(rag_query("Quantos dias de férias tenho?"))
-print(rag_query("Posso trabalhar de casa?"))
-print(rag_query("Qual é o salário?"))  # não está na base
+    return result
+
+
+def evaluate_retrieval(
+    retrieval_fn,
+    test_cases: list[dict],
+    k: int = 5,
+) -> dict:
+    """
+    Harness de avaliação de retrieval sem dependências externas.
+
+    test_cases: lista de {"query": str, "relevant_doc_ids": list[str]}
+    retrieval_fn: função que recebe query e retorna lista de {"doc_id": str}
+    """
+    precisions, recalls, mrrs = [], [], []
+
+    for case in test_cases:
+        query = case["query"]
+        relevant = set(case["relevant_doc_ids"])
+        retrieved = retrieval_fn(query, k=k)
+        retrieved_ids = [r["doc_id"] for r in retrieved]
+
+        # Precision@K
+        relevant_retrieved = [id for id in retrieved_ids[:k] if id in relevant]
+        precision = len(relevant_retrieved) / k
+        precisions.append(precision)
+
+        # Recall@K
+        recall = len(relevant_retrieved) / len(relevant) if relevant else 0
+        recalls.append(recall)
+
+        # MRR
+        mrr = 0.0
+        for rank, doc_id in enumerate(retrieved_ids, start=1):
+            if doc_id in relevant:
+                mrr = 1.0 / rank
+                break
+        mrrs.append(mrr)
+
+    return {
+        f"precision@{k}": sum(precisions) / len(precisions),
+        f"recall@{k}": sum(recalls) / len(recalls),
+        "mrr": sum(mrrs) / len(mrrs),
+    }
+
+
+# Exemplo de conjunto de teste manual
+TEST_CASES = [
+    {
+        "query": "Qual é a política de férias?",
+        "relevant_doc_ids": ["rh_politicas_chunk_3", "rh_politicas_chunk_4"],
+    },
+    {
+        "query": "Como solicitar vale-refeição?",
+        "relevant_doc_ids": ["rh_beneficios_chunk_1"],
+    },
+]
 ```
 
 ---
 
-## 4.14 RAG Avançado — Técnicas de Melhoria
+## 5.8 Dados obsoletos e atualização do índice
 
-### 1. Query Rewriting
+Documentos mudam. A política de RH atualiza. A API muda de versão. Seu índice precisa refletir isso.
 
-Reescrever a pergunta do usuário para melhorar a recuperação:
+### Estratégias de atualização
 
-```python
-def rewrite_query(original_query: str) -> str:
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{
-            "role": "user",
-            "content": f"""Reescreva esta pergunta para maximizar a recuperação 
-            de documentos relevantes. Torne-a mais específica e inclua sinônimos relevantes.
-            Retorne apenas a pergunta reescrita.
-            
-            Pergunta original: {original_query}"""
-        }],
-        temperature=0
-    )
-    return response.choices[0].message.content
-
-# "férias" → "política de férias, dias de descanso, período de licença remunerada"
-```
-
-### 2. Multi-Query
-
-Gerar múltiplas variações da pergunta e combinar resultados:
+**Delete-and-reinsert** é a abordagem mais simples e mais comum:
 
 ```python
-def multi_query_search(question: str, n_queries: int = 3) -> list:
-    # Gerar variações
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{
-            "role": "user", 
-            "content": f"""Gere {n_queries} variações diferentes desta pergunta 
-            para busca em documentos. Cada variação em uma linha.
-            
-            Pergunta: {question}"""
-        }]
-    )
-    
-    queries = [question] + response.choices[0].message.content.strip().split("\n")
-    
-    # Buscar com cada variação e combinar
-    all_results = set()
-    for q in queries:
-        results = collection.query(query_texts=[q], n_results=3)
-        for doc in results["documents"][0]:
-            all_results.add(doc)
-    
-    return list(all_results)
+import time
+
+
+def update_document_in_index(
+    collection,
+    embedding_service,
+    new_document_path: str,
+    source_id: str,
+) -> None:
+    """Atualiza um documento: remove chunks antigos, indexa novos."""
+    from pathlib import Path
+
+    # 1. Remove versão antiga
+    delete_by_source(collection, source_id)
+
+    # 2. Extrai e processa nova versão
+    path = Path(new_document_path)
+    doc = extract_pdf(path) or extract_markdown(path)
+    if not doc:
+        raise ValueError(f"Não foi possível extrair: {new_document_path}")
+
+    doc.content = clean_text(doc.content)
+    chunks_raw = chunk_by_paragraph(doc.content)
+
+    if not chunks_raw:
+        raise ValueError(f"Nenhum chunk gerado para: {new_document_path}")
+
+    # 3. Gera embeddings
+    embeddings = embedding_service.embed_batch(chunks_raw)
+
+    # 4. Indexa com timestamp de atualização
+    metadatas = [
+        {
+            "source": source_id,
+            "updated_at": int(time.time()),
+            "chunk_index": i,
+        }
+        for i in range(len(chunks_raw))
+    ]
+    index_chunks(collection, chunks_raw, metadatas, embeddings)
+
+    print(f"Documento '{source_id}' atualizado: {len(chunks_raw)} chunks.")
 ```
 
-### 3. Reranking
+### Filtragem por recência
 
-Após recuperar candidatos, usar um modelo de reranking para reordenar por relevância:
-
-```bash
-pip install sentence-transformers
-```
+Adicione `updated_at` como metadado e filtre na query:
 
 ```python
-from sentence_transformers import CrossEncoder
+import time
 
-reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-
-def rerank(query: str, documents: list[str], top_k: int = 3) -> list[str]:
-    """Usa cross-encoder para reordenar documentos por relevância."""
-    pairs = [(query, doc) for doc in documents]
-    scores = reranker.predict(pairs)
-    
-    ranked = sorted(zip(scores, documents), reverse=True)
-    return [doc for _, doc in ranked[:top_k]]
-
-# Fluxo com reranking
-candidates = collection.query(query_texts=[query], n_results=10)["documents"][0]
-reranked = rerank(query, candidates, top_k=3)
+# Só documentos atualizados nos últimos 90 dias
+cutoff = int(time.time()) - (90 * 24 * 60 * 60)
+results = search(
+    collection,
+    query_embedding,
+    where={"updated_at": {"$gte": cutoff}},
+)
 ```
 
-### 4. Hybrid Search
-
-Combina busca vetorial (semântica) com busca por palavras-chave (BM25):
+### Monitorando a frescura do índice
 
 ```python
-from rank_bm25 import BM25Okapi
+def check_index_freshness(collection, max_age_days: int = 30) -> dict:
+    """Verifica se há documentos com mais de N dias sem atualização."""
+    cutoff = int(time.time()) - (max_age_days * 24 * 60 * 60)
+    all_docs = collection.get(include=["metadatas"])
 
-class HybridSearch:
-    def __init__(self, documents):
-        self.documents = documents
-        # BM25 para busca léxica
-        tokenized = [doc.lower().split() for doc in documents]
-        self.bm25 = BM25Okapi(tokenized)
-    
-    def search(self, query: str, top_k: int = 5, alpha: float = 0.5):
-        # Busca léxica (BM25)
-        bm25_scores = self.bm25.get_scores(query.lower().split())
-        
-        # Busca semântica (vetorial)
-        semantic_results = collection.query(query_texts=[query], n_results=len(self.documents))
-        semantic_scores = [0.0] * len(self.documents)
-        # mapear scores...
-        
-        # Combinar (Reciprocal Rank Fusion ou média ponderada)
-        combined = alpha * bm25_scores + (1 - alpha) * semantic_scores
-        
-        top_indices = combined.argsort()[-top_k:][::-1]
-        return [self.documents[i] for i in top_indices]
-```
+    stale_sources = set()
+    for meta in all_docs["metadatas"]:
+        updated_at = meta.get("updated_at", 0)
+        if updated_at < cutoff:
+            stale_sources.add(meta.get("source", "desconhecido"))
 
-### 5. Self-RAG (RAG Reflexivo)
-
-O modelo avalia se precisa buscar informação antes de responder:
-
-```python
-def self_rag(question: str) -> str:
-    # 1. O modelo decide se precisa de retrieval
-    decision_prompt = f"""Você precisa de informações externas para responder esta pergunta?
-    Responda apenas SIM ou NÃO.
-    
-    Pergunta: {question}"""
-    
-    need_retrieval = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": decision_prompt}]
-    ).choices[0].message.content.strip().upper()
-    
-    if need_retrieval == "SIM":
-        context = retrieve(question)
-        return generate_with_context(question, context)
-    else:
-        return generate_direct(question)
+    return {
+        "stale_sources": list(stale_sources),
+        "stale_count": len(stale_sources),
+        "needs_attention": len(stale_sources) > 0,
+    }
 ```
 
 ---
 
-## 4.15 Construindo um Chatbot RAG Completo
+## 5.9 Modos de falha comuns em RAG
+
+Conhecer os modos de falha economiza horas de debug em produção.
+
+| Falha | Sintoma | Causa raiz | Solução |
+|-------|---------|-----------|---------|
+| **Retrieval failure** | Resposta correta existe nos docs mas não é usada | Chunks errados recuperados | Melhore chunking, revise embeddings, use híbrida |
+| **Context irrelevance** | Chunks recuperados mas não úteis | Embeddings ruins para o domínio/idioma | Teste modelos multilíngues específicos |
+| **Alucinação com contexto** | Modelo ignora o contexto e inventa | Instrução fraca no prompt ou contexto muito longo | Fortaleça instrução, reduza tamanho do contexto |
+| **Artefato de chunking** | Resposta incompleta, frase cortada no meio | Chunk dividido em ponto ruim | Use overlap maior, chunking semântico |
+| **Informação contraditória** | Resposta confusa ou inconsistente | Múltiplas versões do mesmo doc no índice | Limpeza do índice, política de update clara |
+| **Latência alta** | Usuário espera muito | Embedding na query + retrieval + LLM em sequência | Cache de embeddings de queries frequentes |
+
+### Template de system prompt para RAG com instrução forte
 
 ```python
-class RAGChatbot:
-    def __init__(self, collection):
-        self.client = OpenAI()
-        self.collection = collection
-        self.history = []
-    
-    def chat(self, user_message: str) -> str:
-        # 1. Buscar contexto
-        context = self._retrieve(user_message)
-        
-        # 2. Construir mensagens com histórico
-        messages = [
-            {"role": "system", "content": f"""Você é um assistente prestativo.
-Use o contexto fornecido para responder. Se não souber, diga que não sabe.
+RAG_SYSTEM_PROMPT = """Você é um assistente que responde perguntas com base nos documentos fornecidos.
 
-CONTEXTO RELEVANTE:
-{context}"""}
-        ] + self.history + [
-            {"role": "user", "content": user_message}
-        ]
-        
-        # 3. Gerar resposta
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            temperature=0.3
-        )
-        
-        answer = response.choices[0].message.content
-        
-        # 4. Atualizar histórico
-        self.history.append({"role": "user", "content": user_message})
-        self.history.append({"role": "assistant", "content": answer})
-        
-        # 5. Manter histórico limitado
-        if len(self.history) > 10:
-            self.history = self.history[-10:]
-        
-        return answer
-    
-    def _retrieve(self, query: str, n: int = 3) -> str:
-        results = self.collection.query(query_texts=[query], n_results=n)
-        docs = results["documents"][0]
-        return "\n\n".join(docs)
+REGRAS ESTRITAS:
+1. Responda SOMENTE com base nas informações presentes nos documentos abaixo.
+2. Se a informação não estiver nos documentos, diga explicitamente: "Não encontrei essa informação nos documentos disponíveis."
+3. Nunca invente informações ou complete com conhecimento externo.
+4. Quando citar uma informação, indique de qual documento ela veio.
+
+DOCUMENTOS:
+{context}
+"""
+
+def build_rag_prompt(retrieved_chunks: list[dict]) -> str:
+    context_parts = []
+    for i, chunk in enumerate(retrieved_chunks, 1):
+        source = chunk["metadata"].get("source", f"Documento {i}")
+        context_parts.append(f"[{i}] Fonte: {source}\n{chunk['content']}")
+
+    return RAG_SYSTEM_PROMPT.format(context="\n\n---\n\n".join(context_parts))
 ```
 
 ---
 
-## 📌 Resumo da Parte 04
+## 📌 Resumo da Parte 05
 
-| Conceito | Descrição |
+| Conceito | Definição |
 |----------|-----------|
-| Embedding | Vetor numérico que representa semanticamente um texto |
-| Similaridade de Cosseno | Mede ângulo entre vetores (0-1 para texto) |
-| Chunking | Dividir documentos longos antes de embedar |
-| Busca Semântica | Encontrar documentos por significado, não palavras-chave |
-| Modelo de Embedding | Rede neural que transforma texto em vetor |
-| Dimensões | Tamanho do vetor — mais dimensões = mais capacidade |
-| Banco Vetorial | BD otimizado para armazenar e buscar vetores |
-| ANN | Busca aproximada de vizinhos mais próximos |
-| HNSW | Algoritmo de indexação baseado em grafos hierárquicos |
-| ChromaDB | Banco vetorial simples para dev e prototipagem |
-| FAISS | Biblioteca de alta performance da Meta |
-| pgvector | Extensão para adicionar vetores ao PostgreSQL |
-| Filtragem híbrida | Combina busca vetorial com filtros de metadados |
-| RAG | Arquitetura que combina recuperação + geração |
-| Indexação | Chunking → Embedding → Banco vetorial (feita uma vez) |
-| Consulta | Embed query → busca → contexto → LLM → resposta |
-| Faithfulness | Resposta fiel ao contexto recuperado |
-| Reranking | Reordenar candidatos com modelo mais preciso |
-| Hybrid Search | Combina busca vetorial + palavras-chave |
-| Query Rewriting | Reformular pergunta para melhor recuperação |
-
----
+| **RAG** | Recuperação de documentos relevantes para aumentar o contexto do LLM com conhecimento externo |
+| **Ingestion** | Extração, limpeza e preparação de documentos para indexação |
+| **Chunking** | Divisão de documentos em unidades recuperáveis; tamanho depende do domínio |
+| **Embedding** | Representação vetorial do texto que permite busca por similaridade semântica |
+| **Dense retrieval** | Busca por similaridade de embedding; bom para variações semânticas |
+| **Sparse retrieval (BM25)** | Busca por palavras-chave; bom para termos técnicos exatos |
+| **Busca híbrida** | Combinação de dense e sparse; melhor resultado na maioria dos casos |
+| **Reranking** | Refinamento dos top-K resultados com cross-encoder; mais preciso, mais lento |
+| **Precision@K** | Proporção de resultados relevantes entre os top-K recuperados |
+| **Recall@K** | Proporção de documentos relevantes que foram recuperados nos top-K |
+| **Filtragem de metadados** | Restrição da busca por atributos como categoria, data, fonte |
+| **Ragas** | Biblioteca para avaliação automatizada de pipelines RAG |
 
 ## 🔗 Referências
 
-- [OpenAI Embeddings Guide](https://platform.openai.com/docs/guides/embeddings)
-- [Sentence Transformers](https://www.sbert.net/)
-- [MTEB Benchmark](https://huggingface.co/spaces/mteb/leaderboard) — ranking de modelos de embedding
-- [Understanding Embeddings](https://simonwillison.net/2023/Oct/23/embeddings/)
-- [ChromaDB Docs](https://docs.trychroma.com)
-- [FAISS Wiki](https://github.com/facebookresearch/faiss/wiki)
-- [pgvector GitHub](https://github.com/pgvector/pgvector)
-- [Qdrant Docs](https://qdrant.tech/documentation)
-- [Vector Database Comparison](https://ann-benchmarks.com)
-- [RAG Paper (Lewis et al., 2020)](https://arxiv.org/abs/2005.11401)
-- [RAGAS - Evaluation Framework](https://ragas.io)
-- [LangChain RAG](https://python.langchain.com/docs/use_cases/question_answering/)
-- [LlamaIndex](https://docs.llamaindex.ai)
-- [Advanced RAG Techniques](https://towardsdatascience.com/advanced-rag-techniques)
+- [MTEB Leaderboard — benchmarks de embedding](https://huggingface.co/spaces/mteb/leaderboard)
+- [Ragas — avaliação de pipelines RAG](https://github.com/explodinggradients/ragas)
+- [ChromaDB documentação](https://docs.trychroma.com/)
+- [Qdrant documentação](https://qdrant.tech/documentation/)
+- [BAAI/bge-m3 — modelo multilíngue](https://huggingface.co/BAAI/bge-m3)
+- [Pinecone — guia de chunking](https://www.pinecone.io/learn/chunking-strategies/)
+- [Advanced RAG — survey paper](https://arxiv.org/abs/2312.10997)
+- [pgvector — extensão vetorial para PostgreSQL](https://github.com/pgvector/pgvector)
 
 ---
 
-⬅️ **Anterior:** [Parte 03 — Prompt Engineering](./parte-03-prompt-engineering.md) | ➡️ **Próximo:** [Parte 05 — Agentes de IA](./parte-05-agentes-ia.md)
+⬅️ **Anterior:** [Parte 04](./parte-04-engenharia-de-contexto-2.md) | ➡️ **Próximo:** [Parte 06](./parte-06-agentes-no-sistema.md)  
+🏠 **Início:** [README](../README.md)

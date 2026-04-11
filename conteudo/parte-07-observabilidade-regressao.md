@@ -1,974 +1,1157 @@
-# Parte 06 — Construindo Ferramentas com IA
+# Parte 07 — Observabilidade e Regressão de Comportamento
 
-> **Carga horária:** 7 horas  
-> **Prática correspondente:** [Prática 06](../praticas/pratica-06-pipeline-projeto-final.md)
-
----
-
-## 6.1 Da IA para o Produto
-
-Você já sabe os componentes individuais. Esta parte foca em **juntar tudo** para construir ferramentas reais e úteis.
-
-> **Mindset de produto:** Uma ferramenta com IA deve resolver um problema real de forma mais eficiente do que a alternativa sem IA.
-
-### Checklist antes de começar
-
-- [ ] Qual problema específico isso resolve?
-- [ ] Quem são os usuários?
-- [ ] Qual é o input e output esperado?
-- [ ] IA é a melhor solução para isso?
-- [ ] Quais são os riscos de falha?
-- [ ] Como medir sucesso?
+> **Carga horária:** 2h  
+> **Prática correspondente:** [Prática 07](../praticas/pratica-07-observabilidade.md)
 
 ---
 
-## 6.2 Padrões de Arquitetura
+## 7.1 Por que observabilidade é diferente em sistemas com LLM
 
-### Padrão 1 — LLM como Núcleo
+Em sistemas tradicionais, observabilidade significa: métricas (CPU, latência, taxa de erro), logs (o que aconteceu) e traces (onde o tempo foi gasto). Você sabe se algo está errado porque há um erro HTTP 500, uma exception no log, ou uma métrica fora do limite.
+
+Em sistemas com LLM, você pode ter um sistema que:
+- **Retorna HTTP 200** com uma resposta incorreta
+- **Não lança exceções** mas alucinoou
+- **Funciona perfeitamente** para 95% dos casos mas falha sutilmente nos 5% mais importantes
+- **Degradou silenciosamente** depois que você mudou o system prompt
+
+Isso é fundamentalmente diferente. Você não sabe que algo está errado a não ser que você registre e avalie o que o modelo está produzindo.
+
+### Os três problemas específicos de LLMs
+
+**1. Não-determinismo:** O mesmo prompt pode gerar respostas diferentes. Sem logging de cada interação, você não consegue reproduzir bugs. "O modelo disse X ontem" é inútil sem o log exato da chamada.
+
+**2. Custo invisível:** Cada token custa dinheiro. Uma feature nova que dobrou o tamanho do contexto pode ter dobrado seu custo sem nenhum alarme. Sem monitoramento de tokens e custo, a surpresa chega na fatura.
+
+**3. Degradação de comportamento:** Um prompt que funcionava bem pode degradar silenciosamente se o modelo mudar (atualizações de versão), se a distribuição de inputs mudar, ou se o system prompt for editado com boas intenções mas efeito colateral inesperado.
+
+### O que observabilidade de LLM precisa capturar
 
 ```
-[Input] → [Preprocessamento] → [LLM] → [Postprocessamento] → [Output]
+Chamada de LLM tradicional:
+  latência + status code = suficiente
+
+Chamada de LLM em produção:
+  latência + tokens (input/output) + custo + modelo + versão do prompt +
+  temperatura + sistema (hash) + usuário + sessão + resposta completa +
+  qualidade da resposta (se possível avaliar)
 ```
 
-**Exemplos:**
-- Classificador de sentimentos
-- Gerador de descrições de produto
-- Tradutor especializado
+---
+
+## 7.2 O que registrar (e o que não registrar)
+
+### O que você DEVE registrar
+
+| Campo | Por quê |
+|-------|---------|
+| `messages` (input completo) | Reproduzir o problema exato |
+| `response` (output completo) | Avaliar qualidade depois |
+| `model` | Comportamento varia por modelo |
+| `prompt_version` | Rastrear qual versão do prompt gerou o resultado |
+| `input_tokens` | Custo e limites de contexto |
+| `output_tokens` | Custo |
+| `latency_ms` | Performance e SLA |
+| `timestamp` | Correlação temporal |
+| `user_id` | Debug por usuário, análise de segmento |
+| `session_id` | Rastrear conversações inteiras |
+| `cost_usd` | Alertas de custo |
+
+### O que você DEVE REGISTRAR COM CUIDADO
+
+**PII (Informação Pessoal Identificável) em prompts:**
+
+Na era da LGPD (Lei Geral de Proteção de Dados), o prompt pode conter nome, CPF, email, endereço de um usuário. Registrar isso em logs sem criptografia ou anonimização é um risco legal sério.
 
 ```python
-class SentimentClassifier:
-    def __init__(self):
-        self.client = OpenAI()
-        self.system = """Classifique o sentimento como: positivo, negativo ou neutro.
-        Retorne APENAS JSON: {"sentiment": "...", "confidence": 0.0-1.0, "reason": "..."}"""
-    
-    def classify(self, text: str) -> dict:
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": self.system},
-                {"role": "user", "content": text}
-            ],
-            temperature=0,
-            response_format={"type": "json_object"}
-        )
-        return json.loads(response.choices[0].message.content)
+import re
+
+
+def sanitize_pii_from_log(text: str) -> str:
+    """
+    Remove/mascara PII óbvia antes de registrar.
+    IMPORTANTE: isto é uma heurística, não uma solução completa.
+    Considere uma solução de PII detection dedicada para produção.
+    """
+    # CPF: 000.000.000-00 ou 00000000000
+    text = re.sub(r"\d{3}\.?\d{3}\.?\d{3}-?\d{2}", "[CPF_REDACTED]", text)
+
+    # Email
+    text = re.sub(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", "[EMAIL_REDACTED]", text)
+
+    # Telefone brasileiro: (11) 99999-9999 ou 11999999999
+    text = re.sub(r"(?:\(?\d{2}\)?\s?)(?:9\d{4}[\s-]?\d{4}|\d{4}[\s-]?\d{4})", "[PHONE_REDACTED]", text)
+
+    # Cartão de crédito (16 dígitos, possivelmente com espaços/hífens)
+    text = re.sub(r"\b(?:\d{4}[\s\-]?){3}\d{4}\b", "[CARD_REDACTED]", text)
+
+    return text
 ```
 
-### Padrão 2 — RAG Pipeline
-
-```
-[Documentos] → [Indexação] → [Banco Vetorial]
-                                     ↑
-[Query] → [Busca] → [Contexto] → [LLM] → [Resposta]
-```
-
-**Exemplos:**
-- Chatbot de documentação
-- Assistente de suporte técnico
-- Buscador de legislação
-
-### Padrão 3 — Agente com Ferramentas
-
-```
-[Input] → [Agente] ↔ [Ferramentas] → [Output]
-```
-
-**Exemplos:**
-- Assistente que acessa banco de dados
-- Agente de análise de mercado
-- Automação de fluxos de trabalho
-
-### Padrão 4 — Pipeline de Processamento
-
-```
-[Doc] → [Extração] → [Análise] → [Síntese] → [Relatório]
-```
-
-**Exemplos:**
-- Análise de contratos
-- Revisão de currículos
-- Processamento de notas fiscais
-
-### Padrão 5 — Assistente Inteligente Completo
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    ASSISTENTE INTELIGENTE                │
-│                                                          │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │ Interface │ → │    Agente    │ ← │  Ferramentas │  │
-│  │ (web/CLI) │    │   Central    │    │  - Busca web │  │
-│  └──────────┘    │              │    │  - Calculadora│  │
-│                  │  ┌────────┐  │    │  - API externa│  │
-│  ┌──────────┐    │  │  LLM   │  │    └──────────────┘  │
-│  │  Memória │ ↔  │  │GPT-4o  │  │                      │
-│  │(histórico│    │  └────────┘  │    ┌──────────────┐  │
-│  │  + estado│    │       ↑      │ ← │  Base RAG    │  │
-│  └──────────┘    └──────────────┘    │ (ChromaDB)   │  │
-│                                      └──────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
-
-Este é o padrão mais completo, combinando RAG, agentes, ferramentas e memória — a base do projeto final desta parte.
-
----
-
-## 6.3 Construindo uma API com FastAPI
-
-```bash
-pip install fastapi uvicorn python-multipart
-```
+### Wrapper de LLM com structured logging
 
 ```python
-# app.py
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from openai import OpenAI
 import json
+import logging
+import time
+import uuid
+from dataclasses import dataclass, asdict, field
+from typing import Any, Optional
 
-app = FastAPI(title="API de IA", version="1.0")
-client = OpenAI()
-
-class ChatRequest(BaseModel):
-    message: str
-    temperature: float = 0.7
-    max_tokens: int = 500
-
-class ChatResponse(BaseModel):
-    response: str
-    tokens_used: int
-    model: str
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    try:
-        result = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Você é um assistente útil."},
-                {"role": "user", "content": request.message}
-            ],
-            temperature=request.temperature,
-            max_tokens=request.max_tokens
-        )
-        
-        return ChatResponse(
-            response=result.choices[0].message.content,
-            tokens_used=result.usage.total_tokens,
-            model=result.model
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-# Iniciar: uvicorn app:app --reload
-```
-
----
-
-## 6.4 Interface Web com Streamlit
-
-```bash
-pip install streamlit
-```
-
-```python
-# streamlit_app.py
-import streamlit as st
 from openai import OpenAI
 
-st.set_page_config(page_title="Chat IA", page_icon="🤖")
+logger = logging.getLogger("llm.calls")
 
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-st.title("🤖 Assistente de IA")
-st.caption("Powered by GPT-4o-mini")
+@dataclass
+class LLMCallLog:
+    call_id: str
+    timestamp: str
+    model: str
+    prompt_version: Optional[str]
+    input_tokens: int
+    output_tokens: int
+    latency_ms: float
+    cost_usd: float
+    user_id: Optional[str]
+    session_id: Optional[str]
+    success: bool
+    error: Optional[str] = None
+    # Não registrar o conteúdo completo em ambientes com LGPD sem anonimização
+    input_hash: Optional[str] = None  # hash do input para correlação sem expor conteúdo
+    response_preview: Optional[str] = None  # primeiros 100 chars
 
-# Inicializar histórico de mensagens
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
 
-# Exibir histórico
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
 
-# Input do usuário
-if prompt := st.chat_input("Digite sua mensagem..."):
-    # Adicionar mensagem do usuário
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.write(prompt)
-    
-    # Gerar resposta com streaming
-    with st.chat_message("assistant"):
-        with st.spinner("Pensando..."):
-            stream = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=st.session_state.messages,
-                stream=True
+# Preços por modelo (por token)
+MODEL_PRICES = {
+    "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+    "gpt-4o": {"input": 5.00 / 1_000_000, "output": 15.00 / 1_000_000},
+    "gpt-4o-2024-11-20": {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
+    "claude-3-5-sonnet-20241022": {"input": 3.00 / 1_000_000, "output": 15.00 / 1_000_000},
+    "claude-3-5-haiku-20241022": {"input": 0.80 / 1_000_000, "output": 4.00 / 1_000_000},
+}
+
+
+def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    prices = MODEL_PRICES.get(model, MODEL_PRICES["gpt-4o-mini"])
+    return input_tokens * prices["input"] + output_tokens * prices["output"]
+
+
+class ObservableLLMClient:
+    """
+    Wrapper em volta do cliente OpenAI com logging estruturado.
+    Drop-in replacement para chamadas diretas ao OpenAI.
+    """
+
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini",
+        prompt_version: Optional[str] = None,
+        log_content: bool = False,  # False em produção com dados sensíveis
+    ):
+        self.client = OpenAI()
+        self.model = model
+        self.prompt_version = prompt_version
+        self.log_content = log_content
+
+    def complete(
+        self,
+        messages: list[dict],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        **kwargs,
+    ) -> tuple[str, LLMCallLog]:
+        call_id = str(uuid.uuid4())
+        start_time = time.time()
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                **kwargs,
             )
-            response = st.write_stream(stream)
-    
-    st.session_state.messages.append({"role": "assistant", "content": response})
 
-# Iniciar: streamlit run streamlit_app.py
+            latency_ms = (time.time() - start_time) * 1000
+            content = response.choices[0].message.content or ""
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+            cost = calculate_cost(self.model, input_tokens, output_tokens)
+
+            import hashlib
+            input_str = json.dumps(messages, ensure_ascii=False)
+            input_hash = hashlib.sha256(input_str.encode()).hexdigest()[:16]
+
+            log_entry = LLMCallLog(
+                call_id=call_id,
+                timestamp=timestamp,
+                model=self.model,
+                prompt_version=self.prompt_version,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=round(latency_ms, 2),
+                cost_usd=round(cost, 8),
+                user_id=user_id,
+                session_id=session_id,
+                success=True,
+                input_hash=input_hash,
+                response_preview=content[:100] if self.log_content else None,
+            )
+
+            logger.info(log_entry.to_json())
+            return content, log_entry
+
+        except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000
+            log_entry = LLMCallLog(
+                call_id=call_id,
+                timestamp=timestamp,
+                model=self.model,
+                prompt_version=self.prompt_version,
+                input_tokens=0,
+                output_tokens=0,
+                latency_ms=round(latency_ms, 2),
+                cost_usd=0.0,
+                user_id=user_id,
+                session_id=session_id,
+                success=False,
+                error=str(e),
+            )
+            logger.error(log_entry.to_json())
+            raise
 ```
 
 ---
 
-## 6.5 Processamento em Lote
+## 7.3 Rastreamento de custos em produção
 
-Para processar grandes volumes de dados:
+Custo de LLM em produção é traiçoeiro. Uma feature que aumenta o contexto médio em 500 tokens por chamada, com 10.000 chamadas/dia, pode adicionar R$ 100-500/mês sem que ninguém perceba — até a fatura chegar.
+
+### Tracker de custo com alertas
 
 ```python
-import asyncio
-from openai import AsyncOpenAI
+import threading
+from collections import defaultdict
+from datetime import datetime, date
 
-async_client = AsyncOpenAI()
 
-async def process_single(text: str, semaphore: asyncio.Semaphore) -> dict:
-    async with semaphore:  # limita concorrência
-        response = await async_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": f"Resuma em 1 frase: {text}"}],
-            max_tokens=100
+class CostTracker:
+    """
+    Rastreia custos de LLM por usuário, feature e modelo.
+    Thread-safe para uso em ambientes de produção.
+    """
+
+    def __init__(self, daily_budget_usd: float = 50.0, alert_threshold: float = 0.8):
+        self._lock = threading.Lock()
+        self._costs: list[dict] = []
+        self.daily_budget_usd = daily_budget_usd
+        self.alert_threshold = alert_threshold
+        self._alert_sent_today = False
+
+    def record(
+        self,
+        cost_usd: float,
+        model: str,
+        user_id: Optional[str] = None,
+        feature: Optional[str] = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        with self._lock:
+            self._costs.append({
+                "timestamp": datetime.now().isoformat(),
+                "date": date.today().isoformat(),
+                "cost_usd": cost_usd,
+                "model": model,
+                "user_id": user_id or "anonymous",
+                "feature": feature or "unknown",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            })
+            self._check_budget_alert()
+
+    def _check_budget_alert(self) -> None:
+        today = date.today().isoformat()
+        today_cost = sum(
+            r["cost_usd"] for r in self._costs if r["date"] == today
         )
+
+        if (
+            not self._alert_sent_today
+            and today_cost >= self.daily_budget_usd * self.alert_threshold
+        ):
+            self._alert_sent_today = True
+            self._send_alert(today_cost)
+
+        # Reset flag no novo dia
+        if self._costs and self._costs[-1]["date"] != today:
+            self._alert_sent_today = False
+
+    def _send_alert(self, current_cost: float) -> None:
+        """Em produção, envie para Slack, PagerDuty, etc."""
+        percentage = (current_cost / self.daily_budget_usd) * 100
+        logger.critical(
+            f"ALERTA DE CUSTO: ${current_cost:.4f} ({percentage:.0f}% do orçamento diário "
+            f"de ${self.daily_budget_usd})"
+        )
+        # Exemplo: requests.post(SLACK_WEBHOOK, json={"text": f"Alerta: ..."})
+
+    def daily_summary(self) -> dict:
+        today = date.today().isoformat()
+        today_records = [r for r in self._costs if r["date"] == today]
+
+        if not today_records:
+            return {"date": today, "total_usd": 0, "by_model": {}, "by_feature": {}, "by_user": {}}
+
+        by_model = defaultdict(float)
+        by_feature = defaultdict(float)
+        by_user = defaultdict(float)
+
+        for r in today_records:
+            by_model[r["model"]] += r["cost_usd"]
+            by_feature[r["feature"]] += r["cost_usd"]
+            by_user[r["user_id"]] += r["cost_usd"]
+
+        total = sum(r["cost_usd"] for r in today_records)
+
         return {
-            "input": text[:50],
-            "summary": response.choices[0].message.content
+            "date": today,
+            "total_usd": round(total, 6),
+            "total_brl": round(total * 5.1, 4),
+            "budget_used_pct": round((total / self.daily_budget_usd) * 100, 1),
+            "calls": len(today_records),
+            "by_model": dict(by_model),
+            "by_feature": dict(by_feature),
+            "top_users_by_cost": sorted(
+                by_user.items(), key=lambda x: x[1], reverse=True
+            )[:10],
         }
 
-async def batch_process(texts: list[str], max_concurrent: int = 10) -> list[dict]:
-    semaphore = asyncio.Semaphore(max_concurrent)
-    tasks = [process_single(text, semaphore) for text in texts]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Filtrar erros
-    return [r for r in results if not isinstance(r, Exception)]
+    def monthly_projection(self) -> dict:
+        """Projeta custo mensal com base nos últimos 7 dias."""
+        import statistics
+        from collections import Counter
 
-# Uso
-texts = ["texto 1...", "texto 2...", "texto 3..."]
-results = asyncio.run(batch_process(texts))
+        daily_costs = defaultdict(float)
+        for r in self._costs:
+            daily_costs[r["date"]] += r["cost_usd"]
+
+        if not daily_costs:
+            return {"projection_usd": 0}
+
+        recent_days = sorted(daily_costs.keys())[-7:]
+        recent_values = [daily_costs[d] for d in recent_days]
+
+        avg_daily = statistics.mean(recent_values)
+        projection = avg_daily * 30
+
+        return {
+            "avg_daily_usd": round(avg_daily, 4),
+            "monthly_projection_usd": round(projection, 2),
+            "monthly_projection_brl": round(projection * 5.1, 2),
+            "based_on_days": len(recent_days),
+        }
+
+
+# Instância global (singleton por processo)
+cost_tracker = CostTracker(daily_budget_usd=50.0)
 ```
 
 ---
 
-## 6.6 Cache e Otimização
+## 7.4 Regressão de prompts: como detectar que você quebrou algo
+
+### O problema
+
+Você tem um chatbot funcionando bem. Alguém (talvez você mesmo) edita o system prompt para melhorar um caso de uso. O chatbot continua respondendo — nenhuma exceção, nenhum erro. Mas 3 dias depois, os usuários começam a reclamar. O comportamento degradou silenciosamente.
+
+Este é o problema de regressão de prompt. É a versão LLM de "funcionava na minha máquina".
+
+### Conjuntos de avaliação: o golden test set
+
+A solução é um conjunto de casos de teste com entradas, comportamentos esperados e critérios de avaliação. Esse conjunto precisa ser mantido e executado a cada mudança de prompt.
 
 ```python
-import hashlib
 import json
-import redis  # ou shelve para local
+from dataclasses import dataclass
+from typing import Callable, Optional
 
-class CachedLLM:
-    def __init__(self, ttl: int = 3600):
-        self.client = OpenAI()
-        self.cache = redis.Redis(host="localhost", port=6379, decode_responses=True)
-        self.ttl = ttl
-    
-    def _cache_key(self, messages: list, model: str) -> str:
-        content = json.dumps({"messages": messages, "model": model}, sort_keys=True)
-        return f"llm:{hashlib.sha256(content.encode()).hexdigest()}"
-    
-    def call(self, messages: list, model: str = "gpt-4o-mini", **kwargs) -> str:
-        # Apenas cacheamos quando temperatura = 0 (determinístico)
-        if kwargs.get("temperature", 0.7) == 0:
-            cache_key = self._cache_key(messages, model)
-            cached = self.cache.get(cache_key)
-            if cached:
-                return cached
-        
-        response = self.client.chat.completions.create(
-            model=model, messages=messages, **kwargs
-        )
-        result = response.choices[0].message.content
-        
-        if kwargs.get("temperature", 0.7) == 0:
-            self.cache.setex(cache_key, self.ttl, result)
-        
-        return result
-```
 
----
+@dataclass
+class EvalCase:
+    """Um caso de teste para avaliação de prompt."""
+    name: str
+    input_messages: list[dict]
+    # Pode ser uma string exata, ou uma função que recebe a resposta e retorna bool
+    expected_behavior: str
+    # Critério de sucesso: substring na resposta, regex, ou função customizada
+    success_criterion: Callable[[str], bool]
+    tags: list[str] = None
+    weight: float = 1.0  # casos mais críticos têm peso maior
 
-## 6.7 Observabilidade com Langfuse
 
-### 6.7.1 Langfuse — Observabilidade Open-Source para LLMs
+def contains_all(*substrings: str) -> Callable[[str], bool]:
+    """Verifica se a resposta contém todas as substrings (case-insensitive)."""
+    def check(response: str) -> bool:
+        response_lower = response.lower()
+        return all(s.lower() in response_lower for s in substrings)
+    return check
 
-[Langfuse](https://langfuse.com) é uma plataforma **open-source** de observabilidade para aplicações com LLM. Permite rastrear chamadas, medir latência, custos e qualidade das respostas. Pode ser self-hosted (gratuito) ou usar o cloud (com tier gratuito generoso).
 
-```bash
-pip install langfuse
-```
+def does_not_contain(*substrings: str) -> Callable[[str], bool]:
+    """Verifica se a resposta NÃO contém certas substrings."""
+    def check(response: str) -> bool:
+        response_lower = response.lower()
+        return all(s.lower() not in response_lower for s in substrings)
+    return check
 
-```python
-from langfuse import Langfuse
-from langfuse.decorators import observe, langfuse_context
-from openai import OpenAI
 
-# Configurar Langfuse (self-hosted ou cloud gratuito)
-# Variáveis de ambiente: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
-langfuse = Langfuse()
+def response_is_json() -> Callable[[str], bool]:
+    """Verifica se a resposta é JSON válido."""
+    def check(response: str) -> bool:
+        try:
+            json.loads(response)
+            return True
+        except json.JSONDecodeError:
+            return False
+    return check
 
-@observe()
-def classificar_sentimento(texto: str) -> dict:
-    """Classifica sentimento com rastreamento automático via Langfuse."""
-    client = OpenAI(
-        base_url="http://localhost:11434/v1",  # Ollama (gratuito)
-        api_key="ollama"
-    )
-    
-    response = client.chat.completions.create(
-        model="llama3.2",
-        messages=[
-            {"role": "system", "content": "Classifique o sentimento como: positivo, negativo ou neutro. Responda apenas com a classificação."},
-            {"role": "user", "content": texto}
+
+# Golden test set para um chatbot de suporte de e-commerce
+GOLDEN_TEST_SET = [
+    EvalCase(
+        name="status_pedido_simples",
+        input_messages=[
+            {"role": "user", "content": "Onde está meu pedido PED-123?"}
         ],
-        temperature=0
-    )
-    
-    resultado = response.choices[0].message.content
-    
-    # Registrar score no Langfuse para avaliação
-    langfuse_context.score_current_trace(
-        name="sentiment_confidence",
-        value=1.0 if resultado.lower() in ["positivo", "negativo", "neutro"] else 0.0
-    )
-    
-    return {"texto": texto, "sentimento": resultado}
-
-# Usar a função — automaticamente rastreada no Langfuse
-classificar_sentimento("Adorei o produto, muito bom!")
-classificar_sentimento("Péssima experiência, não recomendo.")
-
-# Flush para garantir envio dos dados
-langfuse.flush()
+        expected_behavior="Deve solicitar o ID completo ou confirmar que vai buscar",
+        success_criterion=contains_all("pedido"),
+        tags=["pedidos", "happy_path"],
+        weight=1.0,
+    ),
+    EvalCase(
+        name="reclamacao_tom_adequado",
+        input_messages=[
+            {"role": "user", "content": "Que absurdo! Meu produto chegou quebrado!"}
+        ],
+        expected_behavior="Deve se desculpar, mostrar empatia, oferecer solução",
+        success_criterion=contains_all("desculp"),
+        tags=["reclamacao", "tom"],
+        weight=2.0,  # mais crítico
+    ),
+    EvalCase(
+        name="pergunta_fora_do_escopo",
+        input_messages=[
+            {"role": "user", "content": "Qual é a capital da França?"}
+        ],
+        expected_behavior="Deve declinar gentilmente e redirecionar para o suporte",
+        success_criterion=does_not_contain("paris", "france", "capital"),
+        tags=["escopo", "guardrails"],
+        weight=1.5,
+    ),
+    EvalCase(
+        name="sem_inventar_politicas",
+        input_messages=[
+            {"role": "user", "content": "Vocês têm política de devolução de 60 dias?"}
+        ],
+        expected_behavior="Não deve confirmar política que não está no sistema prompt",
+        success_criterion=does_not_contain("sim, 60 dias", "60 days"),
+        tags=["alucinacao", "guardrails"],
+        weight=3.0,  # crítico
+    ),
+]
 ```
 
-> **🎓 Self-hosted gratuito:** Para uso educacional, Langfuse pode ser executado localmente via Docker: `docker compose up` a partir do repositório oficial.
-
-### 6.7.2 Observabilidade Manual (Sem Dependências Externas)
-
-Para uma solução mais simples, sem dependências adicionais:
+### Runner de avaliação de regressão
 
 ```python
 import time
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+
 
 @dataclass
-class LLMCall:
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    model: str = ""
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    latency_ms: float = 0
-    success: bool = True
-    error: str = ""
+class EvalResult:
+    case_name: str
+    passed: bool
+    response: str
+    latency_ms: float
+    cost_usd: float
+    error: Optional[str] = None
 
-class ObservableLLM:
-    def __init__(self):
-        self.client = OpenAI(
-            base_url="http://localhost:11434/v1",
-            api_key="ollama"
+
+@dataclass
+class EvalSuiteResult:
+    prompt_version: str
+    timestamp: str
+    results: list[EvalResult]
+    total_cost_usd: float
+    total_latency_ms: float
+
+    @property
+    def pass_rate(self) -> float:
+        if not self.results:
+            return 0.0
+        return sum(1 for r in self.results if r.passed) / len(self.results)
+
+    @property
+    def weighted_pass_rate(self, test_set: list[EvalCase] = None) -> float:
+        """Taxa de aprovação ponderada por peso do caso."""
+        if not self.results:
+            return 0.0
+        total_weight = sum(tc.weight for tc in (test_set or []))
+        if total_weight == 0:
+            return self.pass_rate
+        passed_weight = sum(
+            tc.weight
+            for tc, result in zip(test_set or [], self.results)
+            if result.passed
         )
-        self.calls: list[LLMCall] = []
-        self.logger = logging.getLogger(__name__)
-    
-    def call(self, messages: list, **kwargs) -> str:
-        log = LLMCall(model=kwargs.get("model", "llama3.2"))
-        start = time.time()
-        
+        return passed_weight / total_weight
+
+    def summary(self) -> str:
+        passed = sum(1 for r in self.results if r.passed)
+        total = len(self.results)
+        failed = [r.case_name for r in self.results if not r.passed]
+        return (
+            f"Prompt: {self.prompt_version}\n"
+            f"Resultado: {passed}/{total} casos aprovados ({self.pass_rate:.0%})\n"
+            f"Custo total: ${self.total_cost_usd:.6f}\n"
+            f"Casos reprovados: {failed if failed else 'nenhum'}"
+        )
+
+
+def run_eval_suite(
+    test_cases: list[EvalCase],
+    system_prompt: str,
+    prompt_version: str,
+    model: str = "gpt-4o-mini",
+    max_tokens: int = 500,
+) -> EvalSuiteResult:
+    """Executa o conjunto de avaliação e retorna resultados estruturados."""
+    client = ObservableLLMClient(model=model, prompt_version=prompt_version)
+    results = []
+    total_cost = 0.0
+    total_latency = 0.0
+
+    for case in test_cases:
+        messages = [{"role": "system", "content": system_prompt}] + case.input_messages
+
         try:
-            response = self.client.chat.completions.create(
-                messages=messages, **kwargs
-            )
-            if response.usage:
-                log.prompt_tokens = response.usage.prompt_tokens
-                log.completion_tokens = response.usage.completion_tokens
-            log.latency_ms = (time.time() - start) * 1000
-            
-            result = response.choices[0].message.content
-            self.logger.info(f"LLM call: {log.prompt_tokens}pt + {log.completion_tokens}ct | {log.latency_ms:.0f}ms")
-            return result
-            
+            start = time.time()
+            response, log = client.complete(messages, max_tokens=max_tokens)
+            latency = (time.time() - start) * 1000
+
+            passed = case.success_criterion(response)
+            total_cost += log.cost_usd
+            total_latency += latency
+
+            results.append(EvalResult(
+                case_name=case.name,
+                passed=passed,
+                response=response,
+                latency_ms=round(latency, 2),
+                cost_usd=log.cost_usd,
+            ))
+
+            status = "✅" if passed else "❌"
+            print(f"  {status} {case.name}")
+            if not passed:
+                print(f"     Esperado: {case.expected_behavior}")
+                print(f"     Resposta: {response[:150]}...")
+
         except Exception as e:
-            log.success = False
-            log.error = str(e)
-            log.latency_ms = (time.time() - start) * 1000
-            self.logger.error(f"LLM error: {e}")
-            raise
-        finally:
-            self.calls.append(log)
-    
-    def get_stats(self) -> dict:
-        if not self.calls:
-            return {}
-        successful = [c for c in self.calls if c.success]
-        return {
-            "total_calls": len(self.calls),
-            "success_rate": len(successful) / len(self.calls),
-            "avg_latency_ms": sum(c.latency_ms for c in successful) / len(successful),
-            "total_tokens": sum(c.prompt_tokens + c.completion_tokens for c in successful),
-        }
-```
+            results.append(EvalResult(
+                case_name=case.name,
+                passed=False,
+                response="",
+                latency_ms=0,
+                cost_usd=0,
+                error=str(e),
+            ))
+            print(f"  💥 {case.name} - ERRO: {e}")
 
----
+    return EvalSuiteResult(
+        prompt_version=prompt_version,
+        timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        results=results,
+        total_cost_usd=total_cost,
+        total_latency_ms=total_latency,
+    )
 
-## 6.8 Testes para Aplicações com IA
 
-```python
-import pytest
-from unittest.mock import patch, MagicMock
-
-# Testar com respostas mockadas (sem custo de API)
-def test_sentiment_classifier():
-    mock_response = MagicMock()
-    mock_response.choices[0].message.content = '{"sentiment": "positivo", "confidence": 0.95}'
-    
-    with patch("openai.OpenAI") as mock_openai:
-        mock_openai.return_value.chat.completions.create.return_value = mock_response
-        
-        classifier = SentimentClassifier()
-        result = classifier.classify("Adorei o produto!")
-        
-        assert result["sentiment"] == "positivo"
-        assert result["confidence"] > 0.8
-
-# Testes de integração com casos reais (mais lentos, custosos)
-@pytest.mark.integration
-def test_rag_pipeline_integration():
-    rag = RAGPipeline()
-    rag.index(["Python é uma linguagem de programação"])
-    
-    response = rag.query("O que é Python?")
-    
-    assert "linguagem" in response.lower()
-    assert len(response) > 10
-```
-
----
-
-## 6.9 Ferramentas de Coding com IA (Aider, Continue.dev)
-
-Para programadores, existem ferramentas gratuitas e open-source que usam LLMs para auxiliar no desenvolvimento de código. Aqui listamos as principais opções que podem ser usadas em contexto educacional, sem custo.
-
-### Ferramentas de Linha de Comando
-
-| Ferramenta | Licença | Descrição | Funciona com Ollama? |
-|-----------|---------|-----------|---------------------|
-| [Aider](https://aider.chat) | Apache 2.0 | Pair programming com IA no terminal | ✅ |
-| [OpenCode](https://github.com/opencode-ai/opencode) | MIT | Assistente de código no terminal | ✅ |
-
-### Extensões para Editores (VS Code)
-
-| Ferramenta | Licença | Descrição | Gratuita? |
-|-----------|---------|-----------|-----------|
-| [Continue.dev](https://continue.dev) | Apache 2.0 | Extensão VS Code, autocomplete e chat | ✅ (com Ollama) |
-| [Cline](https://github.com/cline/cline) | Apache 2.0 | Agente de código autônomo no VS Code | ✅ (com Ollama) |
-| [Twinny](https://github.com/rjmacarthy/twinny) | MIT | Autocomplete local com Ollama | ✅ |
-
-### Exemplo: Usando Aider com Ollama (100% Gratuito)
-
-```bash
-# Instalar Aider
-pip install aider-chat
-
-# Usar com modelo local (Ollama)
-aider --model ollama/llama3.2
-
-# Aider conecta ao seu repositório Git e permite:
-# - Editar arquivos via conversa
-# - Criar novos arquivos
-# - Refatorar código
-# - Corrigir bugs
-```
-
-### Exemplo: Continue.dev com Ollama
-
-```json
-// .continue/config.json — configuração para usar Ollama
-{
-  "models": [
-    {
-      "title": "Llama 3.2 (Local)",
-      "provider": "ollama",
-      "model": "llama3.2"
-    }
-  ],
-  "tabAutocompleteModel": {
-    "title": "Autocomplete Local",
-    "provider": "ollama",
-    "model": "deepseek-coder-v2:latest"
-  }
-}
-```
-
-> **🎓 Para educação:** A combinação **Ollama + Continue.dev** ou **Ollama + Aider** oferece uma experiência de coding com IA completamente gratuita, funcionando sem internet após baixar os modelos.
-
----
-
-## 6.10 Deployment
-
-### Docker
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY . .
-
-EXPOSE 8000
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### Variáveis de Ambiente
-
-```python
-# config.py
-from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    openai_api_key: str
-    model_name: str = "gpt-4o-mini"
-    max_tokens: int = 500
-    temperature: float = 0.7
-    chroma_path: str = "./data/chroma"
-    
-    class Config:
-        env_file = ".env"
-
-settings = Settings()
-```
-
----
-
-## 6.11 Projeto Final — Assistente Inteligente Completo
-
-O projeto final integra **todos os conceitos** em um **Assistente Inteligente** completo.
-
-### Consolidando o Aprendizado
-
-Chegamos ao momento de colocar tudo em prática. Ao longo da disciplina, você aprendeu:
-
-| Parte | Conceito | Status |
-|-------|----------|--------|
-| 01 | Introdução à IA Generativa | ✅ |
-| 02 | Prompt Engineering | ✅ |
-| 03 | Embeddings e Bancos Vetoriais | ✅ |
-| 04 | RAG | ✅ |
-| 05 | Agentes de IA | ✅ |
-| 06 | **Ferramentas com IA + Projeto Final** | 🎯 |
-
-### Especificação
-
-Construir um assistente de IA para um domínio à sua escolha com:
-
-1. **Base de conhecimento** (RAG com documentos do domínio)
-2. **Conversação com memória** (histórico de chat)
-3. **Ferramentas** (pelo menos 2 ferramentas relevantes)
-4. **Interface** (CLI, API REST ou interface web)
-5. **Avaliação** (métricas de qualidade)
-
-### Domínios Sugeridos
-
-- 📚 Assistente de estudos (responde perguntas sobre o curso)
-- 🏥 Assistente médico (apenas informativo, sem diagnóstico)
-- ⚖️ Assistente jurídico (consulta de leis e regulamentos)
-- 🏢 Assistente de RH (políticas e procedimentos da empresa)
-- 💻 Assistente de código (documentação e boas práticas)
-- 🎓 Tutor de programação (exercícios e explicações)
-
-### Implementação de Referência
-
-```python
-# assistente_final.py
-import json
-from openai import OpenAI
-import chromadb
-from datetime import datetime
-
-class AssistenteInteligente:
+# Integração com CI/CD
+def regression_check(
+    new_system_prompt: str,
+    new_prompt_version: str,
+    baseline_pass_rate: float = 0.90,
+) -> bool:
     """
-    Assistente completo com RAG, ferramentas e memória de conversação.
+    Retorna True se o novo prompt passa nos critérios mínimos.
+    Use em pipelines de CI/CD para bloquear deploys regressivos.
     """
-    
-    def __init__(self, nome: str, dominio: str, system_prompt: str):
-        self.nome = nome
-        self.dominio = dominio
-        self.client = OpenAI()
-        
-        # Banco vetorial para RAG
-        chroma = chromadb.PersistentClient(path=f"./data/{nome}")
-        self.kb = chroma.get_or_create_collection(
-            "knowledge_base",
-            metadata={"hnsw:space": "cosine"}
+    print(f"\n🧪 Executando avaliação de regressão para versão: {new_prompt_version}")
+
+    result = run_eval_suite(
+        test_cases=GOLDEN_TEST_SET,
+        system_prompt=new_system_prompt,
+        prompt_version=new_prompt_version,
+    )
+
+    print(f"\n{result.summary()}")
+
+    if result.pass_rate < baseline_pass_rate:
+        print(
+            f"\n🚨 REGRESSÃO DETECTADA: "
+            f"{result.pass_rate:.0%} < {baseline_pass_rate:.0%} mínimo"
         )
-        
-        # Histórico de conversação
-        self.history = []
-        self.system_prompt = system_prompt
-        
-        # Registro de uso
-        self.usage_log = []
-    
-    # ─────────────────────────────
-    # GESTÃO DO CONHECIMENTO (RAG)
-    # ─────────────────────────────
-    
-    def adicionar_conhecimento(self, textos: list[str], fontes: list[str]):
-        """Adiciona documentos à base de conhecimento."""
-        ids = [f"doc_{i}_{datetime.now().timestamp()}" for i in range(len(textos))]
-        metadatas = [{"fonte": s} for s in fontes]
-        self.kb.add(documents=textos, ids=ids, metadatas=metadatas)
-        print(f"✅ {len(textos)} documentos adicionados à base de conhecimento")
-    
-    def buscar_conhecimento(self, query: str, n: int = 3) -> str:
-        """Busca informações relevantes na base de conhecimento."""
-        if self.kb.count() == 0:
-            return ""
-        
-        results = self.kb.query(query_texts=[query], n_results=min(n, self.kb.count()))
-        docs = results["documents"][0]
-        sources = [m.get("fonte", "?") for m in results["metadatas"][0]]
-        
-        return "\n\n".join([f"[{src}]\n{doc}" for doc, src in zip(docs, sources)])
-    
-    # ──────────────────────────────
-    # FERRAMENTAS
-    # ──────────────────────────────
-    
-    def _get_tools_schema(self):
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "buscar_na_base",
-                    "description": "Busca informações específicas na base de conhecimento",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "consulta": {"type": "string", "description": "O que buscar"}
-                        },
-                        "required": ["consulta"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "registrar_informacao",
-                    "description": "Salva uma informação importante mencionada pelo usuário",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "chave": {"type": "string"},
-                            "valor": {"type": "string"}
-                        },
-                        "required": ["chave", "valor"]
-                    }
-                }
-            }
-        ]
-    
-    def _executar_ferramenta(self, nome: str, args: dict) -> str:
-        if nome == "buscar_na_base":
-            resultado = self.buscar_conhecimento(args["consulta"])
-            return resultado or "Nenhuma informação encontrada sobre isso."
-        
-        elif nome == "registrar_informacao":
-            self._estado = getattr(self, "_estado", {})
-            self._estado[args["chave"]] = args["valor"]
-            return f"Informação '{args['chave']}' registrada."
-        
-        return "Ferramenta desconhecida"
-    
-    # ──────────────────────────────
-    # CONVERSA PRINCIPAL
-    # ──────────────────────────────
-    
-    def chat(self, mensagem: str) -> str:
-        """Processa uma mensagem e retorna a resposta do assistente."""
-        
-        # Buscar contexto RAG automaticamente
-        contexto_rag = self.buscar_conhecimento(mensagem)
-        
-        # Construir system prompt com contexto
-        system = self.system_prompt
-        if contexto_rag:
-            system += f"\n\nINFORMAÇÕES RELEVANTES DA BASE DE CONHECIMENTO:\n{contexto_rag}"
-        
-        # Montar mensagens
-        messages = [{"role": "system", "content": system}] + \
-                   self.history[-10:] + \
-                   [{"role": "user", "content": mensagem}]
-        
-        # Loop do agente
-        for _ in range(5):  # máximo 5 passos
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                tools=self._get_tools_schema(),
-                tool_choice="auto",
-                temperature=0.3
-            )
-            
-            msg = response.choices[0].message
-            
-            # Registrar uso
-            self.usage_log.append({
-                "ts": datetime.now().isoformat(),
-                "tokens": response.usage.total_tokens
-            })
-            
-            if response.choices[0].finish_reason == "stop":
-                # Atualizar histórico
-                self.history.append({"role": "user", "content": mensagem})
-                self.history.append({"role": "assistant", "content": msg.content})
-                return msg.content
-            
-            if response.choices[0].finish_reason == "tool_calls":
-                messages.append(msg)
-                for tc in msg.tool_calls:
-                    args = json.loads(tc.function.arguments)
-                    resultado = self._executar_ferramenta(tc.function.name, args)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": resultado
-                    })
-        
-        return "Não consegui processar sua solicitação."
-    
-    def limpar_historico(self):
-        self.history = []
-        print("🗑️  Histórico limpo")
-    
-    def estatisticas(self) -> dict:
-        total_tokens = sum(u["tokens"] for u in self.usage_log)
-        return {
-            "total_interacoes": len(self.usage_log),
-            "total_tokens": total_tokens,
-            "custo_estimado_usd": total_tokens * 0.00015 / 1000,
-            "documentos_na_base": self.kb.count()
+        return False
+
+    print(f"\n✅ Avaliação aprovada: {result.pass_rate:.0%} >= {baseline_pass_rate:.0%}")
+    return True
+```
+
+---
+
+## 7.5 Ferramentas de observabilidade para LLMs
+
+### Langfuse: a melhor opção open-source para times
+
+Langfuse é uma plataforma de observabilidade para LLMs que você pode hospedar você mesmo. Oferece rastreamento de chamadas, avaliações, comparação de prompts e análise de custo.
+
+```python
+# pip install langfuse openai
+from langfuse import Langfuse
+from langfuse.openai import openai  # monkey-patches o cliente openai
+
+# Configura via variáveis de ambiente:
+# LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST (para self-hosted)
+
+langfuse = Langfuse()
+
+
+def chat_com_trace(
+    messages: list[dict],
+    user_id: str,
+    session_id: str,
+    prompt_version: str = "v1",
+    model: str = "gpt-4o-mini",
+) -> str:
+    """
+    Chamada ao LLM com rastreamento automático no Langfuse.
+    O monkey-patch do openai captura automaticamente inputs/outputs/tokens.
+    """
+    trace = langfuse.trace(
+        name="chat_completion",
+        user_id=user_id,
+        session_id=session_id,
+        metadata={
+            "prompt_version": prompt_version,
+            "model": model,
+        },
+    )
+
+    # Com o monkey-patch, esta chamada é automaticamente rastreada
+    response = openai.chat.completions.create(
+        model=model,
+        messages=messages,
+        # Langfuse injeta o trace_id automaticamente
+    )
+
+    content = response.choices[0].message.content
+
+    # Registra score de qualidade (pode ser avaliação humana ou automática)
+    langfuse.score(
+        trace_id=trace.id,
+        name="resposta_util",
+        value=1,  # 0 ou 1, ou valor contínuo
+    )
+
+    return content
+
+
+def avaliar_com_langfuse(trace_id: str, score: float, comment: str = "") -> None:
+    """Registra avaliação de qualidade para um trace existente."""
+    langfuse.score(
+        trace_id=trace_id,
+        name="qualidade",
+        value=score,
+        comment=comment,
+    )
+
+
+# Prompt management com Langfuse
+def get_prompt_from_langfuse(prompt_name: str) -> str:
+    """
+    Busca prompt versionado do Langfuse.
+    Permite editar prompts em produção sem redeploy.
+    """
+    prompt = langfuse.get_prompt(prompt_name)
+    return prompt.compile()  # substitui variáveis se houver
+```
+
+### MLflow: se você já está no ecossistema ML
+
+```python
+# pip install mlflow openai
+import mlflow
+import mlflow.openai
+
+
+def setup_mlflow_tracking(experiment_name: str) -> None:
+    mlflow.set_experiment(experiment_name)
+
+
+def run_with_mlflow(
+    messages: list[dict],
+    system_prompt: str,
+    prompt_version: str,
+    model: str = "gpt-4o-mini",
+) -> str:
+    with mlflow.start_run():
+        # Loga parâmetros
+        mlflow.log_params({
+            "model": model,
+            "prompt_version": prompt_version,
+            "temperature": 0.7,
+        })
+
+        client = ObservableLLMClient(model=model, prompt_version=prompt_version)
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+        response, log = client.complete(full_messages)
+
+        # Loga métricas
+        mlflow.log_metrics({
+            "input_tokens": log.input_tokens,
+            "output_tokens": log.output_tokens,
+            "latency_ms": log.latency_ms,
+            "cost_usd": log.cost_usd,
+        })
+
+        return response
+```
+
+### Logging estruturado custom: às vezes a resposta certa
+
+Para muitos times, ferramentas externas adicionam dependência desnecessária. Um sistema de logging bem estruturado enviando para sua stack de observabilidade existente (Elasticsearch, Grafana Loki, CloudWatch) pode ser suficiente.
+
+```python
+import logging
+import json
+import sys
+
+
+def setup_structured_logging() -> logging.Logger:
+    """
+    Configura logging JSON estruturado.
+    Compatible com Elasticsearch, Grafana Loki, Splunk, etc.
+    """
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter())
+
+    logger = logging.getLogger("llm.observability")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
         }
+        # Se o message já é JSON (nosso LLMCallLog), deserializa
+        try:
+            parsed = json.loads(record.getMessage())
+            log_data.update(parsed)
+            log_data.pop("message", None)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        return json.dumps(log_data, ensure_ascii=False)
+```
+
+### Comparação das ferramentas
+
+| Ferramenta | Tipo | Custo | Self-hosted | Melhor para |
+|------------|------|-------|-------------|-------------|
+| **Langfuse** | Open-source | Gratuito (self-hosted) | ✅ Sim | Times que querem controle total |
+| **LangSmith** | SaaS (LangChain) | Pago | ❌ Não | Quem usa LangChain/LangGraph |
+| **MLflow** | Open-source | Gratuito | ✅ Sim | Quem já usa MLflow para ML |
+| **Weights & Biases** | SaaS | Pago | Parcial | Times com cultura ML forte |
+| **Custom logging** | — | Seu infra | ✅ Sim | Stacks existentes (ELK, Grafana) |
+
+---
+
+## 7.6 Sinais de degradação
+
+Degradação silenciosa é um dos maiores riscos em produção com LLM. Estes são os sinais a monitorar:
+
+### Sinais e como detectar
+
+| Sinal | Indicador | Como detectar |
+|-------|-----------|---------------|
+| **Latência crescente** | p95 latency aumentando ao longo do tempo | Gráfico de percentil de latência |
+| **Taxa de erro aumentando** | Mais chamadas falhando | Taxa de erro por hora/dia |
+| **Custo por chamada aumentando** | Tokens médios por chamada subindo | `avg(input_tokens + output_tokens)` por dia |
+| **Qualidade caindo** | Avaliações automáticas caindo | Score médio de LLM-as-judge ao longo do tempo |
+| **Retrieval degradando (RAG)** | Recall@K caindo | Métricas de retrieval com dataset de teste fixo |
+| **Feedback negativo aumentando** | Thumbs down de usuários | Taxa de feedback negativo |
+
+### Detecção de anomalias simples
+
+```python
+import statistics
+from collections import deque
+from typing import Optional
 
 
-# ──────────────────────────────────
-# EXEMPLO DE USO
-# ──────────────────────────────────
+class MetricAnomalyDetector:
+    """
+    Detector de anomalias baseado em z-score para métricas de LLM.
+    Simples, sem dependências externas.
+    """
 
-if __name__ == "__main__":
-    assistente = AssistenteInteligente(
-        nome="assistente_curso",
-        dominio="educação",
-        system_prompt="""Você é um assistente educacional especializado em IA Generativa
-para o curso de Tópicos Avançados em TI do IFPE.
-Seja didático, use exemplos práticos e encoraje os alunos.
-Quando não souber algo, admita e sugira onde buscar."""
+    def __init__(self, window_size: int = 100, z_score_threshold: float = 3.0):
+        self.window_size = window_size
+        self.z_score_threshold = z_score_threshold
+        self._windows: dict[str, deque] = {}
+
+    def record(self, metric_name: str, value: float) -> Optional[dict]:
+        """
+        Registra um valor e retorna alerta se for anomalia.
+        Retorna None se normal, dict com detalhes se anomalia.
+        """
+        if metric_name not in self._windows:
+            self._windows[metric_name] = deque(maxlen=self.window_size)
+
+        window = self._windows[metric_name]
+
+        # Precisa de dados suficientes para calcular z-score
+        if len(window) < 10:
+            window.append(value)
+            return None
+
+        mean = statistics.mean(window)
+        stdev = statistics.stdev(window)
+
+        window.append(value)
+
+        if stdev == 0:
+            return None
+
+        z_score = abs((value - mean) / stdev)
+
+        if z_score > self.z_score_threshold:
+            direction = "alto" if value > mean else "baixo"
+            return {
+                "metric": metric_name,
+                "value": value,
+                "mean": round(mean, 4),
+                "stdev": round(stdev, 4),
+                "z_score": round(z_score, 2),
+                "direction": direction,
+                "alert": f"ANOMALIA: {metric_name}={value:.4f} está {direction} demais (z={z_score:.1f})",
+            }
+
+        return None
+
+
+# Uso em produção
+anomaly_detector = MetricAnomalyDetector(window_size=200, z_score_threshold=2.5)
+
+def monitor_llm_call(log: LLMCallLog) -> None:
+    """Monitora métricas de uma chamada e alerta anomalias."""
+    metrics = {
+        "latency_ms": log.latency_ms,
+        "input_tokens": log.input_tokens,
+        "output_tokens": log.output_tokens,
+        "cost_usd": log.cost_usd,
+    }
+
+    for metric_name, value in metrics.items():
+        alert = anomaly_detector.record(metric_name, value)
+        if alert:
+            logger.warning(json.dumps(alert))
+            # Em produção: enviar para Slack, PagerDuty, etc.
+```
+
+### Dashboard de métricas simples
+
+```python
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+
+class LLMMetricsDashboard:
+    """Agregação de métricas para dashboard."""
+
+    def __init__(self):
+        self._records: list[LLMCallLog] = []
+
+    def add(self, log: LLMCallLog) -> None:
+        self._records.append(log)
+
+    def summary_last_n_hours(self, hours: int = 24) -> dict:
+        cutoff = datetime.now() - timedelta(hours=hours)
+        recent = [
+            r for r in self._records
+            if datetime.fromisoformat(r.timestamp.replace("Z", "")) > cutoff
+        ]
+
+        if not recent:
+            return {"period_hours": hours, "calls": 0}
+
+        latencies = [r.latency_ms for r in recent if r.success]
+        input_tokens = [r.input_tokens for r in recent if r.success]
+        costs = [r.cost_usd for r in recent]
+
+        return {
+            "period_hours": hours,
+            "calls": len(recent),
+            "success_rate": sum(1 for r in recent if r.success) / len(recent),
+            "avg_latency_ms": round(statistics.mean(latencies), 1) if latencies else 0,
+            "p95_latency_ms": round(sorted(latencies)[int(len(latencies) * 0.95)], 1) if latencies else 0,
+            "avg_input_tokens": round(statistics.mean(input_tokens), 0) if input_tokens else 0,
+            "total_cost_usd": round(sum(costs), 6),
+            "total_cost_brl": round(sum(costs) * 5.1, 4),
+            "by_model": {
+                model: sum(r.cost_usd for r in recent if r.model == model)
+                for model in set(r.model for r in recent)
+            },
+        }
+```
+
+---
+
+## 7.7 Experimentos e A/B testing de prompts
+
+Você tem o prompt A e o prompt B. Qual é melhor? Não no seu julgamento — no comportamento real com usuários reais.
+
+### Framework simples de A/B test
+
+```python
+import random
+import hashlib
+from dataclasses import dataclass
+
+
+@dataclass
+class Variant:
+    name: str
+    system_prompt: str
+    weight: float = 0.5  # proporção do tráfego (0 a 1)
+
+
+class PromptABTest:
+    """
+    Framework de A/B test para prompts.
+    Usa hash do user_id para atribuição estável (o mesmo usuário sempre vê a mesma variante).
+    """
+
+    def __init__(self, variants: list[Variant], experiment_name: str):
+        assert abs(sum(v.weight for v in variants) - 1.0) < 0.01, \
+            "Pesos devem somar 1.0"
+        self.variants = variants
+        self.experiment_name = experiment_name
+        self._results: dict[str, list[dict]] = {v.name: [] for v in variants}
+
+    def assign_variant(self, user_id: str) -> Variant:
+        """
+        Atribuição estável por hash: o mesmo user_id sempre recebe a mesma variante.
+        Garante experiência consistente para o usuário.
+        """
+        hash_val = int(hashlib.md5(f"{self.experiment_name}:{user_id}".encode()).hexdigest(), 16)
+        rand_val = (hash_val % 10000) / 10000  # valor entre 0 e 1
+
+        cumulative = 0.0
+        for variant in self.variants:
+            cumulative += variant.weight
+            if rand_val < cumulative:
+                return variant
+
+        return self.variants[-1]
+
+    def record_outcome(
+        self,
+        user_id: str,
+        variant_name: str,
+        metric_name: str,
+        metric_value: float,
+    ) -> None:
+        """Registra outcome para análise estatística."""
+        self._results[variant_name].append({
+            "user_id": user_id,
+            "metric": metric_name,
+            "value": metric_value,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    def analyze(self, metric_name: str) -> dict:
+        """
+        Análise estatística simples do experimento.
+        Para significância estatística real, use scipy.stats.ttest_ind.
+        """
+        analysis = {}
+
+        for variant in self.variants:
+            records = [
+                r["value"]
+                for r in self._results[variant.name]
+                if r["metric"] == metric_name
+            ]
+            if not records:
+                analysis[variant.name] = {"n": 0, "mean": None}
+                continue
+
+            analysis[variant.name] = {
+                "n": len(records),
+                "mean": round(statistics.mean(records), 4),
+                "stdev": round(statistics.stdev(records), 4) if len(records) > 1 else 0,
+            }
+
+        # Comparação entre variantes (se 2 variantes)
+        if len(self.variants) == 2:
+            v_a, v_b = self.variants[0].name, self.variants[1].name
+            if analysis[v_a].get("mean") and analysis[v_b].get("mean"):
+                diff = analysis[v_b]["mean"] - analysis[v_a]["mean"]
+                analysis["comparison"] = {
+                    "absolute_diff": round(diff, 4),
+                    "relative_diff_pct": round(
+                        (diff / analysis[v_a]["mean"]) * 100, 1
+                    ) if analysis[v_a]["mean"] != 0 else None,
+                    "winner": v_b if diff > 0 else v_a if diff < 0 else "empate",
+                    "warning": "Execute teste estatístico formal antes de concluir.",
+                }
+
+        return analysis
+
+
+# LLM-as-Judge para avaliação automatizada
+def llm_as_judge(
+    question: str,
+    response: str,
+    criteria: str,
+    judge_model: str = "gpt-4o",
+) -> dict:
+    """
+    Usa um LLM mais forte para avaliar a qualidade de respostas.
+    Útil para escalar avaliação sem anotação humana.
+
+    CUIDADO: LLM-as-judge tem vieses conhecidos:
+    - Preferência por respostas longas
+    - Preferência pelo mesmo modelo (se for o mesmo)
+    - Sensível ao formato do prompt de avaliação
+    """
+    client = OpenAI()
+
+    judge_prompt = f"""Você é um avaliador especializado. Avalie a resposta abaixo.
+
+PERGUNTA DO USUÁRIO:
+{question}
+
+RESPOSTA A AVALIAR:
+{response}
+
+CRITÉRIO DE AVALIAÇÃO:
+{criteria}
+
+Forneça:
+1. Uma pontuação de 0 a 10 (10 = perfeito)
+2. Uma justificativa em 1-2 frases
+3. Problemas identificados (se houver)
+
+Responda em JSON:
+{{"score": <número>, "justificativa": "<texto>", "problemas": ["<item>", ...]}}"""
+
+    response_obj = client.chat.completions.create(
+        model=judge_model,
+        messages=[{"role": "user", "content": judge_prompt}],
+        response_format={"type": "json_object"},
     )
-    
-    # Adicionar conhecimento
-    assistente.adicionar_conhecimento(
-        textos=[
-            "RAG significa Retrieval Augmented Generation. É uma técnica que combina busca em documentos com geração de texto por LLMs.",
-            "Embeddings são representações vetoriais de texto. Textos similares têm vetores próximos no espaço vetorial.",
-            "LLMs são modelos de linguagem de grande escala, treinados em bilhões de textos para prever o próximo token.",
-        ],
-        fontes=["parte-04.md", "parte-03.md", "parte-01.md"]
-    )
-    
-    # Interface de linha de comando
-    print(f"\n🤖 {assistente.nome} iniciado! Digite 'sair' para encerrar.\n")
-    
-    while True:
-        user_input = input("Você: ").strip()
-        if user_input.lower() in ["sair", "exit", "quit"]:
-            stats = assistente.estatisticas()
-            print(f"\n📊 Estatísticas: {stats}")
-            break
-        if not user_input:
-            continue
-        
-        resposta = assistente.chat(user_input)
-        print(f"\n🤖 Assistente: {resposta}\n")
+
+    try:
+        result = json.loads(response_obj.choices[0].message.content)
+        result["judge_model"] = judge_model
+        return result
+    except json.JSONDecodeError:
+        return {"score": -1, "erro": "Juiz não retornou JSON válido"}
+
+
+# Exemplo de pipeline de avaliação contínua
+def continuous_evaluation_pipeline(
+    test_cases: list[EvalCase],
+    system_prompt_v1: str,
+    system_prompt_v2: str,
+    judge_criteria: str = "A resposta é útil, precisa e adequada para suporte ao cliente?",
+) -> dict:
+    """Compara dois prompts usando LLM-as-judge."""
+    client_v1 = ObservableLLMClient(prompt_version="v1")
+    client_v2 = ObservableLLMClient(prompt_version="v2")
+
+    scores = {"v1": [], "v2": []}
+
+    for case in test_cases:
+        for version, client, prompt in [
+            ("v1", client_v1, system_prompt_v1),
+            ("v2", client_v2, system_prompt_v2),
+        ]:
+            messages = [{"role": "system", "content": prompt}] + case.input_messages
+            response, _ = client.complete(messages)
+
+            question = case.input_messages[-1]["content"]
+            judgment = llm_as_judge(question, response, judge_criteria)
+            scores[version].append(judgment.get("score", 0))
+
+    return {
+        "v1_avg_score": round(statistics.mean(scores["v1"]), 2),
+        "v2_avg_score": round(statistics.mean(scores["v2"]), 2),
+        "improvement": round(
+            statistics.mean(scores["v2"]) - statistics.mean(scores["v1"]), 2
+        ),
+        "recommendation": (
+            "Deploy v2" if statistics.mean(scores["v2"]) > statistics.mean(scores["v1"])
+            else "Manter v1"
+        ),
+    }
 ```
 
 ---
 
-## 6.12 Critérios de Avaliação
+## 📌 Resumo da Parte 07
 
-| Critério | Peso | Descrição |
-|---------|------|-----------|
-| Funcionalidade | 30% | O assistente funciona conforme especificado? |
-| RAG implementado | 20% | Base de conhecimento indexada e buscada corretamente? |
-| Ferramentas | 15% | Pelo menos 2 ferramentas funcionando? |
-| Qualidade do código | 15% | Código limpo, organizado e com tratamento de erros? |
-| Interface | 10% | Interface usável (CLI, API ou web)? |
-| Apresentação | 10% | Demonstração clara do funcionamento? |
-
----
-
-## 6.13 Tendências e Próximos Passos
-
-### O que está acontecendo agora (2024-2025)
-
-#### 1. Modelos Menores e Mais Eficientes
-
-A tendência não é só "maior = melhor":
-- **Phi-3 Mini** (3.8B parâmetros) supera modelos 10x maiores em benchmarks específicos
-- **Llama 3.2 1B/3B**: modelos que rodam no celular
-- **Quantização**: rodar modelos grandes em hardware comum (4-bit, 8-bit)
-
-#### 2. Raciocínio Avançado (Chain of Thought Nativo)
-
-- **OpenAI o1/o3**: modelos que "pensam" antes de responder
-- **DeepSeek R1**: open-source com raciocínio comparável ao o1
-- Melhorias significativas em matemática, código e lógica
-
-#### 3. Multimodalidade
-
-- **Visão**: modelos que analisam imagens e documentos
-- **Áudio**: transcrição e geração de fala integradas
-- **Vídeo**: análise e geração de vídeos curtos
-
-#### 4. Agentes Cada Vez Mais Autônomos
-
-- **Computer Use** (Anthropic): agente que controla o computador
-- **Operator** (OpenAI): agente que navega na web e executa tarefas
-- **Google Workspace AI**: automação integrada no Gmail, Docs, etc.
-
-#### 5. IA no Edge (Dispositivo Local)
-
-- Modelos rodando diretamente no iPhone, Android
-- Sem latência de rede, sem custo de API, privacidade total
-- **Apple Intelligence**, **Google Gemini Nano**
-
-### Skills para Desenvolver
-
-```
-NÍVEL ATUAL (você agora):
-✅ Usar APIs de LLMs
-✅ Prompt Engineering
-✅ RAG básico e avançado
-✅ Agentes simples
-✅ Integrar IA em aplicações
-
-PRÓXIMO NÍVEL:
-→ Fine-tuning de modelos (LoRA, QLoRA)
-→ Avaliação sistemática (LLM-as-judge)
-→ MLOps para LLMs (monitoramento, re-treino)
-→ Multi-agente complexo (LangGraph avançado)
-→ Modelos multimodais (visão + texto)
-→ IA em produção (latência, custo, confiabilidade)
-```
-
----
-
-## 6.14 Recursos para Continuar Aprendendo
-
-### Cursos e Plataformas
-
-| Recurso | Foco | Gratuito? |
-|---------|------|-----------|
-| [fast.ai](https://fast.ai) | ML prático | ✅ |
-| [DeepLearning.AI](https://deeplearning.ai) | Andrew Ng, LLMs | Parcial |
-| [Hugging Face Course](https://huggingface.co/learn) | Transformers, NLP | ✅ |
-| [LangChain Academy](https://academy.langchain.com) | LangChain/LangGraph | Parcial |
-| [Andrej Karpathy (YouTube)](https://youtube.com/@AndrejKarpathy) | Fundamentos de IA | ✅ |
-
-### Newsletters e Blogs
-
-- [The Batch (deeplearning.ai)](https://www.deeplearning.ai/the-batch/)
-- [Simon Willison's Weblog](https://simonwillison.net)
-- [Ahead of AI](https://magazine.sebastianraschka.com)
-
-### Comunidades
-
-- Hugging Face Discord
-- LangChain Discord
-- r/MachineLearning
-- Papers With Code
-
----
-
-## 📌 Resumo da Parte 06
-
-| Conceito | Descrição |
+| Conceito | Definição |
 |----------|-----------|
-| LLM como núcleo | Padrão simples: entrada → LLM → saída |
-| FastAPI | Framework para expor modelos como APIs REST |
-| Streamlit | Interface web rápida para demos e prototipagem |
-| Async/Batch | Processar múltiplas requisições em paralelo |
-| Cache | Evitar chamadas repetidas à API |
-| Langfuse | Observabilidade open-source para aplicações com LLM |
-| Ferramentas de coding | Aider, Continue.dev, OpenCode — gratuitos com Ollama |
-| Testes com mock | Testar comportamento sem chamar API real |
-| Projeto Final | Assistente Inteligente completo integrando todos os conceitos |
-| Tendências | Modelos menores, multimodalidade, agentes autônomos, IA no edge |
-
----
-
-## 📌 Resumo Final da Disciplina
-
-```
-┌─────────────────────────────────────────────┐
-│        JORNADA COMPLETA DA DISCIPLINA       │
-│                                             │
-│  FUNDAMENTOS                                │
-│  ├─ O que é IA Generativa                  │
-│  ├─ Prompt Engineering                     │
-│  └─ APIs de LLMs                           │
-│                                             │
-│  DADOS E MEMÓRIA                           │
-│  ├─ Embeddings e Bancos Vetoriais          │
-│  └─ RAG                                    │
-│                                             │
-│  AGENTES E FERRAMENTAS                     │
-│  ├─ Agentes de IA                          │
-│  └─ Construindo com IA                     │
-│                                             │
-│  PROJETO FINAL                             │
-│  └─ Assistente Inteligente completo        │
-└─────────────────────────────────────────────┘
-```
-
-> **Parabéns por concluir a disciplina!** 🎉  
-> Você tem agora as ferramentas para construir aplicações poderosas com IA.  
-> O melhor aprendizado vem construindo. Continue criando!
-
----
+| **Observabilidade de LLM** | Logging de inputs, outputs, tokens, custo, latência para entender e debugar comportamento |
+| **Non-determinismo** | O mesmo prompt pode gerar respostas diferentes; logging completo é essencial para reproduzir bugs |
+| **PII em prompts** | Dados pessoais em prompts devem ser anonimizados ou criptografados (LGPD) |
+| **Cost tracking** | Monitoramento contínuo de custo por chamada, usuário e feature |
+| **Golden test set** | Conjunto de casos de teste com critérios de sucesso definidos para detectar regressões |
+| **Regressão de prompt** | Degradação silenciosa de comportamento após mudança de prompt |
+| **LLM-as-judge** | Uso de um LLM para avaliar automaticamente a qualidade de respostas de outro LLM |
+| **A/B test de prompts** | Distribuição de tráfego entre variantes de prompt para comparar métricas reais |
+| **Langfuse** | Plataforma open-source de observabilidade para LLMs; self-hostável |
+| **Anomaly detection** | Detecção de métricas fora do padrão (latência, tokens, custo) com z-score |
+| **Prompt versioning** | Rastreamento da versão do prompt usada em cada chamada |
+| **Atribuição estável** | Hash do user_id garante que o mesmo usuário sempre vê a mesma variante no A/B test |
 
 ## 🔗 Referências
 
-- [FastAPI Documentation](https://fastapi.tiangolo.com)
-- [Streamlit Documentation](https://docs.streamlit.io)
-- [Langfuse — Observabilidade Open-Source para LLMs](https://langfuse.com)
-- [Aider — AI Pair Programming](https://aider.chat)
-- [Continue.dev — IDE Extension Open-Source](https://continue.dev)
-- [OpenCode — Terminal AI Assistant](https://github.com/opencode-ai/opencode)
-- [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
-- [ChromaDB Documentation](https://docs.trychroma.com)
-- [fast.ai — Practical Deep Learning](https://fast.ai)
-- [DeepLearning.AI](https://deeplearning.ai)
-- [Hugging Face Course](https://huggingface.co/learn)
-- [LangChain Academy](https://academy.langchain.com)
-- [Andrej Karpathy — YouTube](https://youtube.com/@AndrejKarpathy)
-- [The Batch Newsletter](https://www.deeplearning.ai/the-batch/)
-- [Simon Willison's Weblog](https://simonwillison.net)
-- [Ahead of AI — Sebastian Raschka](https://magazine.sebastianraschka.com)
+- [Langfuse — observabilidade open-source para LLMs](https://langfuse.com/)
+- [MLflow LLM Tracking](https://mlflow.org/docs/latest/llms/index.html)
+- [RAGAS — métricas de avaliação de RAG](https://github.com/explodinggradients/ragas)
+- [LLM-as-judge: biases e limitações](https://arxiv.org/abs/2306.05685)
+- [LGPD — Lei Geral de Proteção de Dados (Brasil)](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm)
+- [OpenTelemetry para LLMs](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+- [Guia de A/B testing estatisticamente correto](https://www.exp-platform.com/Documents/2014%20experimentersRulesOfThumb.pdf)
 
 ---
 
-⬅️ **Anterior:** [Parte 05 — Agentes de IA](./parte-05-agentes-ia.md)  
-🏠 **Início:** [README](../README.md)  
-🛠️ **Prática:** [Prática 06 — Pipeline e Projeto Final](../praticas/pratica-06-pipeline-projeto-final.md)
+⬅️ **Anterior:** [Parte 06](./parte-06-agentes-no-sistema.md) | ➡️ **Fim do curso!** 🎓  
+🏠 **Início:** [README](../README.md)

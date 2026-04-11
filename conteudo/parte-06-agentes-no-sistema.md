@@ -1,1470 +1,1490 @@
-# Parte 05 — Agentes de IA
+# Parte 06 — Agentes no Sistema
 
-> **Carga horária:** 7 horas  
-> **Práticas correspondentes:** [Prática 04](../praticas/pratica-04-agente-simples.md) e [Prática 05](../praticas/pratica-05-agente-ferramentas.md)
-
----
-
-## 5.1 O que é um Agente de IA?
-
-Um **agente de IA** é um sistema que usa um LLM como "cérebro" para:
-1. **Perceber** o ambiente (através de inputs)
-2. **Raciocinar** sobre o que fazer
-3. **Agir** usando ferramentas
-4. **Observar** os resultados
-5. **Iterar** até completar a tarefa
-
-> **Diferença chave:** Enquanto um chatbot simples responde a uma mensagem, um agente pode executar sequências complexas de ações para atingir um objetivo.
-
-```
-Chatbot: "Qual é o clima?" → "Não tenho acesso ao clima em tempo real."
-
-Agente:  "Qual é o clima em Recife?" 
-         → Pensa: "Preciso usar a ferramenta de clima"
-         → Executa: get_weather("Recife")
-         → Recebe: {"temp": 32, "condition": "ensolarado"}
-         → Responde: "Está 32°C e ensolarado em Recife!"
-```
+> **Carga horária:** 7h  
+> **Prática correspondente:** [Prática 06](../praticas/pratica-06-agentes.md)
 
 ---
 
-## 5.2 O Loop ReAct
+## 6.1 O que é um agente? (definição prática, não filosófica)
 
-O padrão **ReAct (Reason + Act)** é a base de muitos agentes modernos:
+O termo "agente" virou buzzword. Vamos ser diretos: **agente = LLM + ferramentas + loop**.
+
+O LLM decide o que fazer. As ferramentas fazem acontecer coisas no mundo (chamar APIs, ler arquivos, executar código). O loop é o que permite que o agente execute múltiplos passos até completar uma tarefa.
+
+Sem o loop, você tem um assistente que responde uma vez e para. Com o loop, você tem um sistema que planeja, age, observa o resultado, re-planeja, e age novamente — até terminar ou falhar.
+
+### O padrão ReAct: Reason → Act → Observe
+
+ReAct (Yao et al., 2022) é o padrão mais influente em agentes práticos. O modelo alterna entre:
 
 ```
-Thought → Action → Observation → Thought → Action → ... → Final Answer
+Thought: Preciso verificar o saldo da conta do cliente X antes de processar.
+Action: verificar_saldo(cliente_id="X123")
+Observation: {"saldo": 1500.00, "moeda": "BRL", "status": "ativo"}
+
+Thought: O saldo é suficiente. Vou processar a transferência de R$ 200.
+Action: processar_transferencia(origem="X123", destino="Y456", valor=200.00)
+Observation: {"status": "sucesso", "id_transacao": "TRX-789"}
+
+Thought: Transferência concluída. Vou informar o usuário.
+Action: FINISH
 ```
 
-```
-Thought: O usuário quer saber o clima e se precisa de guarda-chuva.
-         Primeiro vou verificar o clima.
-Action: get_weather(city="Recife")
-Observation: {"temperature": 32, "condition": "sunny", "rain_chance": 5%}
+Cada iteração desse loop consome tokens. Cada `Action` chama uma ferramenta real. Cada `Observation` é o retorno dessa ferramenta injetado de volta no contexto.
 
-Thought: Está ensolarado com 5% de chance de chuva. Não precisa de guarda-chuva.
-Final Answer: Em Recife está 32°C e ensolarado. Você não precisará de guarda-chuva hoje.
-```
+### Quando agentes são apropriados
+
+| Cenário | Use agente? | Por quê |
+|---------|-------------|---------|
+| Resposta simples com RAG | ❌ Não | Uma chamada + retrieval resolve |
+| Fluxo de N passos fixo e conhecido | ❌ Não | Use código Python normal |
+| Tarefa com múltiplos passos onde o próximo depende do anterior | ✅ Sim | O agente navega a incerteza |
+| Integração com múltiplas APIs em sequência variável | ✅ Sim | O LLM decide a ordem |
+| Tarefas de pesquisa e sumarização de múltiplas fontes | ✅ Sim | O agente orquestra o processo |
+
+**Regra anti-hype:** se você consegue escrever o fluxo em Python sem usar um LLM para decidir o próximo passo, não use agente. Agentes adicionam custo, latência e não-determinismo. Use quando a tarefa tem ramificações que você não consegue prever em código.
+
+### Agentes em produção vs. demos
+
+Em demos, agentes fazem maravilhas. Em produção, você descobre:
+
+- **Custo**: 10-50 iterações × custo de token = caro.
+- **Latência**: cada passo do loop é uma chamada de API (200–2000ms). Fluxos de 10 passos = 2–20 segundos.
+- **Confiabilidade**: ferramentas falham. APIs ficam fora. O agente precisa lidar com isso.
+- **Loops infinitos**: o agente pode entrar em ciclo sem perceber.
+- **Alucinação de ferramentas**: o modelo pode inventar argumentos ou chamar ferramentas com parâmetros inválidos.
+
+Sistemas de agentes em produção têm limites explícitos, circuit breakers, logging robusto e fallbacks.
 
 ---
 
-## 5.3 Agente Simples com Function Calling
+## 6.2 Ferramentas como contratos
+
+A ferramenta é a interface entre o LLM e o mundo. A definição da ferramenta é o contrato que você assina com o modelo.
+
+### O que compõe uma boa definição de ferramenta
+
+1. **Nome claro e descritivo**: `buscar_pedido` é melhor que `get_data`
+2. **Descrição que orienta quando usar**: o modelo lê a descrição para decidir se deve chamar a ferramenta
+3. **Parâmetros bem tipados**: nome, tipo, descrição, se é obrigatório
+4. **Exemplos quando ambíguo**: se o parâmetro tem formato específico, documente
+
+A descrição da ferramenta é lida pelo LLM toda vez que ele decide se vai usá-la. Uma descrição ruim = ferramenta usada na hora errada ou não usada quando deveria.
+
+### Definindo ferramentas no formato OpenAI
 
 ```python
-from openai import OpenAI
-import json
-import requests
+from typing import Any
 
-client = OpenAI()
-
-# ============================================================
-# DEFINIÇÃO DE FERRAMENTAS
-# ============================================================
-
-def search_web(query: str) -> str:
-    """Simula busca na web."""
-    # Em produção, use Tavily, SerpAPI, etc.
-    return f"Resultados para '{query}': [artigo 1, artigo 2, artigo 3]"
-
-def get_weather(city: str) -> dict:
-    """Retorna dados meteorológicos."""
-    # Simulated; em produção use OpenWeatherMap
-    data = {
-        "Recife": {"temp": 32, "condition": "ensolarado", "humidity": 70},
-        "São Paulo": {"temp": 18, "condition": "nublado", "humidity": 85},
-    }
-    return data.get(city, {"error": "Cidade não encontrada"})
-
-def calculate(expression: str) -> str:
-    """Avalia expressão matemática de forma segura."""
-    try:
-        allowed_names = {"__builtins__": {}}
-        result = eval(expression, allowed_names)
-        return str(result)
-    except Exception as e:
-        return f"Erro: {e}"
-
-# Mapeamento nome → função
-TOOLS_MAP = {
-    "search_web": search_web,
-    "get_weather": get_weather,
-    "calculate": calculate,
-}
-
-# Schema de ferramentas para a API
-TOOLS_SCHEMA = [
+# Formato de definição de ferramenta compatível com OpenAI function calling
+TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "search_web",
-            "description": "Busca informações na internet",
+            "name": "buscar_pedido",
+            "description": (
+                "Busca informações detalhadas sobre um pedido de compra pelo ID. "
+                "Use quando o usuário mencionar um número de pedido ou quiser "
+                "verificar o status de uma compra. Retorna status, itens e previsão de entrega."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Termos de busca"}
+                    "pedido_id": {
+                        "type": "string",
+                        "description": "ID do pedido no formato PED-XXXXXX (ex: PED-123456)"
+                    },
+                    "incluir_historico": {
+                        "type": "boolean",
+                        "description": "Se True, inclui o histórico de atualizações do pedido",
+                        "default": False
+                    }
                 },
-                "required": ["query"]
+                "required": ["pedido_id"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "get_weather",
-            "description": "Obtém clima atual de uma cidade",
+            "name": "listar_pedidos_cliente",
+            "description": (
+                "Lista todos os pedidos de um cliente específico, opcionalmente "
+                "filtrados por período ou status. Use quando o usuário quiser ver "
+                "seu histórico de compras ou encontrar um pedido sem saber o ID."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "city": {"type": "string", "description": "Nome da cidade"}
+                    "cliente_id": {
+                        "type": "string",
+                        "description": "ID único do cliente"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["pendente", "em_transito", "entregue", "cancelado"],
+                        "description": "Filtra pedidos por status"
+                    },
+                    "limite": {
+                        "type": "integer",
+                        "description": "Número máximo de pedidos a retornar (padrão: 10)",
+                        "default": 10
+                    }
                 },
-                "required": ["city"]
+                "required": ["cliente_id"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "calculate",
-            "description": "Calcula expressões matemáticas",
+            "name": "calcular_frete",
+            "description": (
+                "Calcula o valor e prazo de frete para um CEP de destino dado o peso "
+                "e dimensões do pacote. Use antes de confirmar compras ou quando o "
+                "usuário perguntar sobre custo de entrega."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "expression": {"type": "string", "description": "Expressão matemática"}
+                    "cep_destino": {
+                        "type": "string",
+                        "description": "CEP de destino no formato XXXXX-XXX ou XXXXXXXX"
+                    },
+                    "peso_gramas": {
+                        "type": "number",
+                        "description": "Peso do pacote em gramas"
+                    },
+                    "modalidade": {
+                        "type": "string",
+                        "enum": ["pac", "sedex", "sedex_10"],
+                        "description": "Modalidade de envio"
+                    }
                 },
-                "required": ["expression"]
+                "required": ["cep_destino", "peso_gramas"]
             }
         }
     }
 ]
+```
 
-# ============================================================
-# LOOP DO AGENTE
-# ============================================================
+### Wrapper Pythônico com decorador
 
-def run_agent(user_message: str, max_steps: int = 10) -> str:
-    """Executa o agente até completar a tarefa ou atingir o limite de passos."""
-    
-    messages = [
-        {"role": "system", "content": "Você é um assistente útil com acesso a ferramentas. Use-as quando necessário para responder com precisão."},
-        {"role": "user", "content": user_message}
-    ]
-    
-    for step in range(max_steps):
-        print(f"\n--- Passo {step + 1} ---")
-        
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            tools=TOOLS_SCHEMA,
-            tool_choice="auto"
+```python
+import functools
+import inspect
+import json
+from typing import Callable, get_type_hints
+
+TOOL_REGISTRY: dict[str, dict] = {}
+TOOL_FUNCTIONS: dict[str, Callable] = {}
+
+
+def tool(description: str):
+    """
+    Decorador que registra uma função como ferramenta de agente.
+
+    Uso:
+        @tool("Busca o clima atual de uma cidade")
+        def buscar_clima(cidade: str, unidade: str = "celsius") -> dict:
+            ...
+    """
+    def decorator(fn: Callable) -> Callable:
+        sig = inspect.signature(fn)
+        hints = get_type_hints(fn)
+
+        properties = {}
+        required = []
+
+        for name, param in sig.parameters.items():
+            if name == "self":
+                continue
+
+            python_type = hints.get(name, str)
+            json_type = _python_type_to_json(python_type)
+
+            param_info = {"type": json_type}
+
+            # Extrai descrição do docstring se disponível
+            if fn.__doc__:
+                doc_lines = fn.__doc__.strip().split("\n")
+                for line in doc_lines:
+                    if f"{name}:" in line:
+                        param_info["description"] = line.split(":", 1)[1].strip()
+                        break
+
+            if param.default is inspect.Parameter.empty:
+                required.append(name)
+            else:
+                param_info["default"] = param.default
+
+            properties[name] = param_info
+
+        tool_def = {
+            "type": "function",
+            "function": {
+                "name": fn.__name__,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            }
+        }
+
+        TOOL_REGISTRY[fn.__name__] = tool_def
+        TOOL_FUNCTIONS[fn.__name__] = fn
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        return wrapper
+    return decorator
+
+
+def _python_type_to_json(python_type) -> str:
+    mapping = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object",
+    }
+    return mapping.get(python_type, "string")
+
+
+# Uso do decorador
+@tool("Busca o preço atual de um produto pelo seu código SKU")
+def buscar_preco(sku: str, incluir_historico: bool = False) -> dict:
+    """
+    sku: Código SKU do produto (ex: PROD-001)
+    incluir_historico: Se True, retorna histórico de preços dos últimos 30 dias
+    """
+    # Implementação real consultaria banco de dados / API
+    return {"sku": sku, "preco": 99.90, "disponivel": True}
+
+
+@tool("Verifica disponibilidade em estoque de um produto")
+def verificar_estoque(sku: str, quantidade: int = 1) -> dict:
+    """
+    sku: Código SKU do produto
+    quantidade: Quantidade desejada para verificação
+    """
+    return {"sku": sku, "disponivel": True, "quantidade_em_estoque": 42}
+```
+
+---
+
+## 6.3 Integração com APIs e sistemas legados
+
+Na prática, a maioria das ferramentas de agentes são wrappers em torno de APIs REST internas ou externas. O agente não sabe (nem deve saber) sobre HTTP, autenticação, rate limits — ele chama a função e recebe o resultado.
+
+### Wrapper robusto com tratamento de erros
+
+```python
+import functools
+import logging
+import time
+from typing import Any, Callable, Optional
+import httpx  # pip install httpx
+
+logger = logging.getLogger(__name__)
+
+
+class ToolError(Exception):
+    """Erro que o agente consegue entender e reagir."""
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def with_retry(
+    max_attempts: int = 3,
+    backoff_factor: float = 1.5,
+    retryable_exceptions: tuple = (httpx.TimeoutException, httpx.ConnectError),
+):
+    """Decorator de retry com backoff exponencial."""
+    def decorator(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return fn(*args, **kwargs)
+                except retryable_exceptions as e:
+                    last_exception = e
+                    if attempt < max_attempts:
+                        wait = backoff_factor ** (attempt - 1)
+                        logger.warning(
+                            f"{fn.__name__} falhou (tentativa {attempt}/{max_attempts}). "
+                            f"Aguardando {wait:.1f}s..."
+                        )
+                        time.sleep(wait)
+                    else:
+                        logger.error(
+                            f"{fn.__name__} falhou após {max_attempts} tentativas: {e}"
+                        )
+            raise ToolError(
+                f"Serviço indisponível após {max_attempts} tentativas: {last_exception}",
+                retryable=False,
+            )
+        return wrapper
+    return decorator
+
+
+class APIClient:
+    """Cliente HTTP reutilizável com autenticação e tratamento de erros."""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: Optional[str] = None,
+        timeout: float = 10.0,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self._headers = {"Content-Type": "application/json"}
+        if api_key:
+            self._headers["Authorization"] = f"Bearer {api_key}"
+
+    @with_retry(max_attempts=3)
+    def get(self, path: str, params: dict = None) -> dict:
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.get(url, params=params, headers=self._headers)
+            return self._handle_response(response)
+
+    @with_retry(max_attempts=3)
+    def post(self, path: str, body: dict) -> dict:
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(url, json=body, headers=self._headers)
+            return self._handle_response(response)
+
+    def _handle_response(self, response: httpx.Response) -> dict:
+        if response.status_code == 404:
+            raise ToolError(f"Recurso não encontrado: {response.url}", retryable=False)
+        if response.status_code == 401:
+            raise ToolError("Não autorizado: verifique as credenciais da API", retryable=False)
+        if response.status_code == 429:
+            raise ToolError("Rate limit atingido. Tente novamente em alguns segundos.", retryable=True)
+        if response.status_code >= 500:
+            raise ToolError(
+                f"Erro interno do servidor ({response.status_code}): {response.text[:200]}",
+                retryable=True,
+            )
+        if not response.is_success:
+            raise ToolError(
+                f"Erro HTTP {response.status_code}: {response.text[:200]}",
+                retryable=False,
+            )
+        try:
+            return response.json()
+        except Exception:
+            return {"raw_response": response.text}
+
+
+# Ferramentas que usam o APIClient
+import os
+
+_erp_client = APIClient(
+    base_url=os.getenv("ERP_API_URL", "https://erp.internal.example.com"),
+    api_key=os.getenv("ERP_API_KEY"),
+)
+
+
+def buscar_cliente(cliente_id: str) -> dict:
+    """Busca dados de um cliente no ERP."""
+    try:
+        return _erp_client.get(f"/clientes/{cliente_id}")
+    except ToolError as e:
+        # Propagamos o erro de forma que o agente possa entender
+        return {
+            "erro": str(e),
+            "retryable": e.retryable,
+            "acao_sugerida": (
+                "Tente novamente mais tarde" if e.retryable
+                else "Verifique o ID do cliente"
+            )
+        }
+
+
+def criar_ticket_suporte(
+    cliente_id: str,
+    assunto: str,
+    descricao: str,
+    prioridade: str = "media",
+) -> dict:
+    """Cria um ticket de suporte no sistema de helpdesk."""
+    if prioridade not in ("baixa", "media", "alta", "critica"):
+        return {"erro": f"Prioridade inválida: {prioridade}. Use: baixa, media, alta, critica"}
+    try:
+        return _erp_client.post("/tickets", {
+            "cliente_id": cliente_id,
+            "assunto": assunto,
+            "descricao": descricao,
+            "prioridade": prioridade,
+        })
+    except ToolError as e:
+        return {"erro": str(e), "ticket_criado": False}
+```
+
+---
+
+## 6.4 O loop ReAct em prática
+
+Vamos implementar o loop de agente do zero. Sem frameworks. Isso é importante para entender o que os frameworks fazem por baixo dos panos.
+
+```python
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional
+
+from openai import OpenAI
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentStep:
+    thought: Optional[str]
+    tool_name: Optional[str]
+    tool_args: Optional[dict]
+    tool_result: Optional[Any]
+    is_final: bool = False
+    final_answer: Optional[str] = None
+
+
+@dataclass
+class AgentResult:
+    answer: str
+    steps: list[AgentStep]
+    total_tokens: int
+    success: bool
+
+
+class ReActAgent:
+    """
+    Implementação minimalista do loop ReAct.
+    Propositalmente sem abstrações para fins didáticos.
+    """
+
+    def __init__(
+        self,
+        tools: list[dict],           # definições de ferramentas (formato OpenAI)
+        tool_functions: dict[str, Callable],  # mapeamento nome -> função
+        model: str = "gpt-4o-mini",
+        max_steps: int = 10,
+        system_prompt: Optional[str] = None,
+    ):
+        self.client = OpenAI()
+        self.tools = tools
+        self.tool_functions = tool_functions
+        self.model = model
+        self.max_steps = max_steps
+        self.system_prompt = system_prompt or (
+            "Você é um assistente que pode usar ferramentas para responder perguntas. "
+            "Use as ferramentas quando necessário. Quando tiver a resposta completa, "
+            "responda diretamente ao usuário sem chamar mais ferramentas."
         )
-        
-        message = response.choices[0].message
-        finish_reason = response.choices[0].finish_reason
-        
-        # Agente terminou
-        if finish_reason == "stop":
-            print(f"✅ Resposta final: {message.content}")
-            return message.content
-        
-        # Agente quer usar uma ferramenta
-        if finish_reason == "tool_calls":
-            messages.append(message)  # adiciona a mensagem do assistente com tool_calls
-            
-            # Executar cada ferramenta solicitada
+        self.total_tokens = 0
+
+    def run(self, user_message: str) -> AgentResult:
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+
+        steps = []
+        step_count = 0
+
+        while step_count < self.max_steps:
+            step_count += 1
+            logger.info(f"Passo {step_count}/{self.max_steps}")
+
+            # Chama o LLM
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=self.tools,
+                tool_choice="auto",
+            )
+
+            self.total_tokens += response.usage.total_tokens
+            message = response.choices[0].message
+
+            # Modelo não quer chamar ferramenta — tem a resposta final
+            if not message.tool_calls:
+                step = AgentStep(
+                    thought=message.content,
+                    tool_name=None,
+                    tool_args=None,
+                    tool_result=None,
+                    is_final=True,
+                    final_answer=message.content,
+                )
+                steps.append(step)
+                logger.info(f"Agente concluiu em {step_count} passos.")
+                return AgentResult(
+                    answer=message.content,
+                    steps=steps,
+                    total_tokens=self.total_tokens,
+                    success=True,
+                )
+
+            # Adiciona a mensagem do assistente (com tool_calls) ao histórico
+            messages.append(message)
+
+            # Executa cada tool call
             for tool_call in message.tool_calls:
-                func_name = tool_call.function.name
-                func_args = json.loads(tool_call.function.arguments)
-                
-                print(f"🔧 Chamando: {func_name}({func_args})")
-                
-                # Executar a função
-                if func_name in TOOLS_MAP:
-                    result = TOOLS_MAP[func_name](**func_args)
-                else:
-                    result = f"Erro: função {func_name} não encontrada"
-                
-                print(f"📥 Resultado: {result}")
-                
-                # Adicionar resultado ao histórico
+                tool_name = tool_call.function.name
+                try:
+                    tool_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    tool_args = {}
+                    logger.warning(f"Args inválidos para {tool_name}: {tool_call.function.arguments}")
+
+                logger.info(f"Chamando ferramenta: {tool_name}({tool_args})")
+
+                # Executa a ferramenta
+                tool_result = self._execute_tool(tool_name, tool_args)
+
+                step = AgentStep(
+                    thought=message.content,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    tool_result=tool_result,
+                )
+                steps.append(step)
+
+                # Adiciona o resultado da ferramenta ao histórico
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": json.dumps(result)
+                    "content": json.dumps(tool_result, ensure_ascii=False),
                 })
-    
-    return "Limite de passos atingido sem resposta final."
 
-# Testar
-print(run_agent("Qual é o clima em Recife? Devo levar guarda-chuva?"))
-print(run_agent("Quanto é 15% de 2750?"))
+        # Limite de passos atingido
+        logger.warning(f"Agente atingiu limite de {self.max_steps} passos.")
+        return AgentResult(
+            answer="Não foi possível completar a tarefa dentro do limite de passos.",
+            steps=steps,
+            total_tokens=self.total_tokens,
+            success=False,
+        )
+
+    def _execute_tool(self, tool_name: str, tool_args: dict) -> Any:
+        fn = self.tool_functions.get(tool_name)
+        if fn is None:
+            logger.error(f"Ferramenta desconhecida: {tool_name}")
+            return {"erro": f"Ferramenta '{tool_name}' não existe."}
+        try:
+            return fn(**tool_args)
+        except TypeError as e:
+            logger.error(f"Argumentos inválidos para {tool_name}: {e}")
+            return {"erro": f"Argumentos inválidos: {e}"}
+        except Exception as e:
+            logger.error(f"Erro ao executar {tool_name}: {e}", exc_info=True)
+            return {"erro": f"Erro ao executar ferramenta: {e}"}
+
+
+# Uso
+if __name__ == "__main__":
+    import os
+
+    def buscar_pedido_mock(pedido_id: str, incluir_historico: bool = False) -> dict:
+        return {
+            "pedido_id": pedido_id,
+            "status": "em_transito",
+            "previsao_entrega": "2024-03-15",
+            "itens": [{"produto": "Notebook", "quantidade": 1, "preco": 3500.00}],
+        }
+
+    def verificar_estoque_mock(sku: str, quantidade: int = 1) -> dict:
+        return {"sku": sku, "disponivel": True, "quantidade_em_estoque": 5}
+
+    agent = ReActAgent(
+        tools=TOOL_DEFINITIONS,
+        tool_functions={
+            "buscar_pedido": buscar_pedido_mock,
+            "verificar_estoque": verificar_estoque_mock,
+        },
+        model="gpt-4o-mini",
+        max_steps=5,
+    )
+
+    result = agent.run("Qual é o status do pedido PED-123456 e tem Notebook em estoque (SKU: NB-001)?")
+    print(f"Resposta: {result.answer}")
+    print(f"Passos: {len(result.steps)}")
+    print(f"Tokens usados: {result.total_tokens}")
 ```
 
 ---
 
-## 5.4 Function Calling em Detalhe
+## 6.5 Padrões de orquestração
 
-Function calling é o mecanismo que permite a um LLM **solicitar a execução de funções** no seu código. O modelo não executa nada diretamente — ele retorna um JSON estruturado indicando qual função quer chamar e com quais argumentos.
+### Padrão 1: Sequencial
 
-### 5.4.1 Anatomia de uma Tool Definition
-
-Cada ferramenta é descrita por um **JSON Schema** que o modelo usa para entender quando e como chamá-la:
+Cada ferramenta é chamada na ordem, o resultado de uma alimenta a próxima.
 
 ```python
-tool_definition = {
-    "type": "function",
-    "function": {
-        "name": "buscar_produto",            # nome único da função
-        "description": "Busca produtos no catálogo por nome ou categoria. "
-                       "Use quando o usuário perguntar sobre produtos disponíveis.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Termo de busca (nome ou categoria do produto)"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Número máximo de resultados (padrão: 5)",
-                    "default": 5
-                },
-                "ordem": {
-                    "type": "string",
-                    "enum": ["preco_asc", "preco_desc", "relevancia"],
-                    "description": "Ordenação dos resultados"
-                }
-            },
-            "required": ["query"]   # apenas query é obrigatório
+def fluxo_sequencial(agent: ReActAgent, etapas: list[str]) -> list[str]:
+    """
+    Executa etapas em sequência, passando contexto acumulado.
+    Útil para workflows lineares com dependências entre etapas.
+    """
+    resultados = []
+    contexto_acumulado = ""
+
+    for etapa in etapas:
+        prompt = f"{contexto_acumulado}\n\nPróxima tarefa: {etapa}" if contexto_acumulado else etapa
+        result = agent.run(prompt)
+        resultados.append(result.answer)
+        # Acumula contexto para a próxima etapa
+        contexto_acumulado = f"Resultado anterior: {result.answer}"
+
+    return resultados
+
+
+# Exemplo: pipeline de processamento de lead
+etapas_lead = [
+    "Busque os dados do cliente ID CL-001",
+    "Com base nos dados do cliente, verifique se ele tem pedidos em aberto",
+    "Crie um resumo personalizado para o representante de vendas",
+]
+```
+
+### Padrão 2: Paralelo (com threading)
+
+```python
+import concurrent.futures
+from typing import NamedTuple
+
+
+class TaskResult(NamedTuple):
+    task_name: str
+    result: AgentResult
+    error: Optional[Exception]
+
+
+def executar_paralelo(
+    tasks: dict[str, str],
+    agent_factory: Callable[[], ReActAgent],
+    max_workers: int = 3,
+) -> dict[str, TaskResult]:
+    """
+    Executa múltiplas tarefas independentes em paralelo.
+
+    tasks: {"nome_da_tarefa": "prompt para o agente"}
+    agent_factory: função que cria um novo agente (cada thread precisa do seu)
+
+    Cuidado: se as ferramentas têm estado compartilhado (ex: banco de dados),
+    garanta thread-safety.
+    """
+    results = {}
+
+    def run_task(task_name: str, task_prompt: str) -> TaskResult:
+        agent = agent_factory()  # agente isolado por task
+        try:
+            result = agent.run(task_prompt)
+            return TaskResult(task_name=task_name, result=result, error=None)
+        except Exception as e:
+            logger.error(f"Tarefa '{task_name}' falhou: {e}")
+            return TaskResult(task_name=task_name, result=None, error=e)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(run_task, name, prompt): name
+            for name, prompt in tasks.items()
         }
-    }
+        for future in concurrent.futures.as_completed(futures):
+            task_result = future.result()
+            results[task_result.task_name] = task_result
+
+    return results
+
+
+# Exemplo: análise de múltiplos produtos simultaneamente
+tarefas_analise = {
+    "produto_A": "Analise o estoque e preço do SKU PROD-001",
+    "produto_B": "Analise o estoque e preço do SKU PROD-002",
+    "produto_C": "Analise o estoque e preço do SKU PROD-003",
 }
 ```
 
-> **💡 Dica:** A `description` da ferramenta é crucial — o modelo decide **quando** usar a ferramenta com base nela. Seja específico e inclua exemplos de quando usá-la.
-
-### 5.4.2 Fluxo Completo de uma Tool Call
+### Padrão 3: Condicional
 
 ```python
-import json
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
-)
-
-# 1. Definir ferramentas
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "consultar_saldo",
-            "description": "Consulta o saldo bancário de um cliente pelo CPF",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "cpf": {"type": "string", "description": "CPF do cliente (apenas números)"}
-                },
-                "required": ["cpf"]
-            }
-        }
-    }
-]
-
-# 2. Implementar a função real
-def consultar_saldo(cpf: str) -> dict:
-    saldos = {
-        "12345678900": {"nome": "Maria", "saldo": 1500.00},
-        "98765432100": {"nome": "João", "saldo": 320.50},
-    }
-    return saldos.get(cpf, {"erro": "CPF não encontrado"})
-
-# 3. Enviar mensagem com ferramentas disponíveis
-messages = [
-    {"role": "user", "content": "Qual o saldo do CPF 12345678900?"}
-]
-
-response = client.chat.completions.create(
-    model="llama3.2",
-    messages=messages,
-    tools=tools,
-    tool_choice="auto"    # "auto", "none", ou {"type": "function", "function": {"name": "..."}}
-)
-
-msg = response.choices[0].message
-
-# 4. Verificar se o modelo quer chamar uma ferramenta
-if msg.tool_calls:
-    # Adicionar a resposta do modelo ao histórico
-    messages.append(msg)
-    
-    for tool_call in msg.tool_calls:
-        nome = tool_call.function.name
-        args = json.loads(tool_call.function.arguments)
-        
-        # 5. Executar a função localmente
-        resultado = consultar_saldo(**args)
-        
-        # 6. Retornar o resultado ao modelo
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tool_call.id,
-            "content": json.dumps(resultado, ensure_ascii=False)
-        })
-    
-    # 7. Obter resposta final do modelo com o resultado da ferramenta
-    response_final = client.chat.completions.create(
-        model="llama3.2",
-        messages=messages,
-        tools=tools
-    )
-    print(response_final.choices[0].message.content)
-```
-
-### 5.4.3 Chamadas Paralelas de Ferramentas
-
-O modelo pode solicitar **múltiplas ferramentas** em uma única resposta. Isso é útil quando várias informações independentes são necessárias:
-
-```python
-from openai import OpenAI
-import json
-from concurrent.futures import ThreadPoolExecutor
-
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
-)
-
-def get_weather(city: str) -> dict:
-    dados = {
-        "Recife": {"temp": 32, "cond": "ensolarado"},
-        "São Paulo": {"temp": 18, "cond": "chuvoso"},
-        "Manaus": {"temp": 35, "cond": "parcialmente nublado"},
-    }
-    return dados.get(city, {"erro": "Cidade não encontrada"})
-
-def get_population(city: str) -> dict:
-    pops = {
-        "Recife": 1_653_461,
-        "São Paulo": 12_396_372,
-        "Manaus": 2_255_903,
-    }
-    return {"city": city, "population": pops.get(city, "desconhecida")}
-
-TOOLS_MAP = {"get_weather": get_weather, "get_population": get_population}
-
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "Obtém clima atual de uma cidade brasileira",
-            "parameters": {
-                "type": "object",
-                "properties": {"city": {"type": "string"}},
-                "required": ["city"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_population",
-            "description": "Obtém a população de uma cidade brasileira",
-            "parameters": {
-                "type": "object",
-                "properties": {"city": {"type": "string"}},
-                "required": ["city"]
-            }
-        }
-    }
-]
-
-messages = [
-    {"role": "user", "content": "Compare clima e população de Recife e São Paulo"}
-]
-
-response = client.chat.completions.create(
-    model="llama3.2", messages=messages, tools=tools
-)
-
-msg = response.choices[0].message
-
-# O modelo pode retornar várias tool_calls de uma vez
-if msg.tool_calls:
-    print(f"Modelo solicitou {len(msg.tool_calls)} chamadas de ferramentas")
-    messages.append(msg)
-    
-    # Executar todas as chamadas em paralelo
-    def execute_tool(tc):
-        func = TOOLS_MAP[tc.function.name]
-        args = json.loads(tc.function.arguments)
-        return tc.id, func(**args)
-    
-    with ThreadPoolExecutor() as executor:
-        results = list(executor.map(execute_tool, msg.tool_calls))
-    
-    for call_id, result in results:
-        messages.append({
-            "role": "tool",
-            "tool_call_id": call_id,
-            "content": json.dumps(result, ensure_ascii=False)
-        })
-    
-    # Resposta final com todos os dados
-    final = client.chat.completions.create(
-        model="llama3.2", messages=messages, tools=tools
-    )
-    print(final.choices[0].message.content)
-```
-
-### 5.4.4 Function Calling com Ollama
-
-O Ollama suporta function calling nativamente via API compatível com OpenAI. Basta apontar o `base_url` para o servidor local:
-
-```python
-from openai import OpenAI
-import json
-
-# Conexão com Ollama local — sem custo!
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
-)
-
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "converter_moeda",
-            "description": "Converte um valor de uma moeda para outra usando taxas fixas de exemplo",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "valor": {"type": "number", "description": "Valor a converter"},
-                    "de": {"type": "string", "description": "Moeda de origem (ex: BRL, USD, EUR)"},
-                    "para": {"type": "string", "description": "Moeda de destino"}
-                },
-                "required": ["valor", "de", "para"]
-            }
-        }
-    }
-]
-
-def converter_moeda(valor: float, de: str, para: str) -> dict:
-    taxas = {
-        ("BRL", "USD"): 0.20, ("USD", "BRL"): 5.00,
-        ("BRL", "EUR"): 0.18, ("EUR", "BRL"): 5.50,
-        ("USD", "EUR"): 0.92, ("EUR", "USD"): 1.09,
-    }
-    taxa = taxas.get((de.upper(), para.upper()))
-    if taxa is None:
-        return {"erro": f"Conversão {de} → {para} não disponível"}
-    return {"valor_original": valor, "de": de, "para": para, "resultado": round(valor * taxa, 2)}
-
-messages = [{"role": "user", "content": "Quanto é 100 reais em dólares?"}]
-
-response = client.chat.completions.create(
-    model="llama3.2",
-    messages=messages,
-    tools=tools
-)
-
-msg = response.choices[0].message
-if msg.tool_calls:
-    messages.append(msg)
-    for tc in msg.tool_calls:
-        args = json.loads(tc.function.arguments)
-        resultado = converter_moeda(**args)
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tc.id,
-            "content": json.dumps(resultado, ensure_ascii=False)
-        })
-    
-    final = client.chat.completions.create(
-        model="llama3.2", messages=messages, tools=tools
-    )
-    print(final.choices[0].message.content)
-```
-
-> **📌 Modelos com suporte a function calling no Ollama:** llama3.2, llama3.1, mistral, qwen2.5, command-r e outros. Verifique a [lista oficial](https://ollama.ai/search?c=tools) para modelos compatíveis.
-
----
-
-## 5.5 Arquiteturas de Agentes
-
-### Agente Único (Single Agent)
-
-```
-User → Agent (com ferramentas) → User
-```
-Simples e eficaz para tarefas moderadas.
-
-### Multi-Agente
-
-```
-User → Orchestrator → [Specialist Agent 1]
-                    → [Specialist Agent 2]
-                    → [Specialist Agent 3]
-       ← Orchestrator ←
-User ←
-```
-
-Cada agente especializado em uma área (busca, código, análise de dados, etc.).
-
-### Agente com Planejamento
-
-```
-User → Planner Agent → [Cria plano de subtarefas]
-                     → Executor Agent 1 (subtarefa 1)
-                     → Executor Agent 2 (subtarefa 2)
-                     → ...
-     ← Summarizer Agent ←
-User ←
-```
-
----
-
-## 5.6 Memória em Agentes
-
-Tipos de memória disponíveis:
-
-```python
-class AgentWithMemory:
-    def __init__(self):
-        self.client = OpenAI()
-        
-        # 1. Memória de conversação (curto prazo)
-        self.conversation_history = []
-        
-        # 2. Memória episódica (longo prazo - armazenada em BD)
-        self.episodic_memory = []  # em produção: banco vetorial
-        
-        # 3. Memória semântica (conhecimento - RAG)
-        self.knowledge_base = None  # banco vetorial com docs
-        
-        # 4. Estado do agente
-        self.state = {}
-    
-    def remember(self, key: str, value):
-        """Salva informação importante no estado."""
-        self.state[key] = value
-    
-    def recall(self, query: str) -> str:
-        """Busca memórias relevantes."""
-        # Em produção: busca semântica nas memórias episódicas
-        relevant = [m for m in self.episodic_memory 
-                    if query.lower() in m.lower()]
-        return "\n".join(relevant[-3:]) if relevant else ""
-```
-
----
-
-## 5.7 Frameworks Open-Source para Agentes
-
-Existem vários frameworks gratuitos e open-source para construir agentes. Abaixo, os mais relevantes para uso educacional.
-
-### 5.7.1 smolagents (Hugging Face) — Recomendado para Iniciantes
-
-O [smolagents](https://github.com/huggingface/smolagents) é a biblioteca de agentes da Hugging Face. É **100% open-source**, simples e funciona com qualquer modelo (local ou API).
-
-```bash
-pip install smolagents
-```
-
-```python
-from smolagents import CodeAgent, tool, LiteLLMModel
-
-# Usar modelo local via Ollama (gratuito!)
-model = LiteLLMModel(model_id="ollama_chat/llama3.2")
-
-# Definir uma ferramenta
-@tool
-def calcular_imc(peso_kg: float, altura_cm: float) -> str:
-    """Calcula o IMC (Índice de Massa Corporal) de uma pessoa.
-    
-    Args:
-        peso_kg: Peso em quilogramas.
-        altura_cm: Altura em centímetros.
+def fluxo_condicional(
+    agent: ReActAgent,
+    tarefa_inicial: str,
+    rotas: dict[str, str],
+    campo_decisao: str = "acao",
+) -> AgentResult:
     """
-    altura_m = altura_cm / 100
-    imc = peso_kg / (altura_m ** 2)
-    if imc < 18.5: cat = "abaixo do peso"
-    elif imc < 25: cat = "peso normal"
-    elif imc < 30: cat = "sobrepeso"
-    else: cat = "obesidade"
-    return f"IMC: {imc:.1f} — Categoria: {cat}"
+    Executa uma tarefa e, baseado no resultado, escolhe a próxima.
 
-# Criar e executar o agente
-agent = CodeAgent(tools=[calcular_imc], model=model)
-result = agent.run("Qual é o IMC de uma pessoa com 80kg e 1.75m?")
-print(result)
+    rotas: {"valor_do_campo": "próximo_prompt"}
+    """
+    resultado_inicial = agent.run(tarefa_inicial)
+
+    # Tenta extrair o campo de decisão da resposta (assumindo JSON)
+    try:
+        dados = json.loads(resultado_inicial.answer)
+        decisao = dados.get(campo_decisao)
+    except (json.JSONDecodeError, AttributeError):
+        logger.warning("Resposta não é JSON, usando rota padrão")
+        decisao = None
+
+    proximo_prompt = rotas.get(decisao) or rotas.get("default")
+    if not proximo_prompt:
+        return resultado_inicial
+
+    contexto = f"Contexto da etapa anterior: {resultado_inicial.answer}\n\n{proximo_prompt}"
+    return agent.run(contexto)
+
+
+# Exemplo: triagem de tickets
+ROTAS_TRIAGEM = {
+    "tecnico": "Escale para o time de engenharia e registre com prioridade alta",
+    "financeiro": "Encaminhe para o departamento financeiro com os dados do pedido",
+    "cancelamento": "Inicie o fluxo de cancelamento e ofereça voucher de compensação",
+    "default": "Registre o ticket como 'outros' e notifique o supervisor",
+}
 ```
 
-> **💡 Vantagem:** smolagents gera código Python para resolver tarefas (CodeAgent), o que é mais transparente e educativo do que tool calling via JSON.
+---
 
-### 5.7.2 LangGraph — Agentes com Fluxo Controlado
+## 6.6 Modos de falha e loops infinitos
 
-LangGraph modela agentes como grafos com nós (ações) e arestas (condições):
+### O problema dos loops infinitos
 
-```bash
-pip install langgraph langchain-openai langchain-community
-```
+Um agente pode entrar em loop quando:
+- A ferramenta retorna erro mas o agente tenta de novo indefinidamente
+- O agente fica pedindo confirmações de si mesmo
+- A tarefa é ambígua e o agente fica refinando indefinidamente
+
+O `max_steps` no `ReActAgent` é o circuit breaker básico. Mas há outras proteções:
 
 ```python
+import hashlib
+from collections import Counter
+
+
+class LoopDetector:
+    """Detecta padrões repetitivos no comportamento do agente."""
+
+    def __init__(self, window_size: int = 3, max_repetitions: int = 2):
+        self.window_size = window_size
+        self.max_repetitions = max_repetitions
+        self.call_history: list[str] = []
+
+    def record_call(self, tool_name: str, tool_args: dict) -> None:
+        signature = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
+        self.call_history.append(signature)
+
+    def is_looping(self) -> bool:
+        if len(self.call_history) < self.window_size * 2:
+            return False
+
+        recent = self.call_history[-self.window_size * self.max_repetitions :]
+        counter = Counter(recent)
+
+        for call, count in counter.items():
+            if count >= self.max_repetitions:
+                return True
+
+        return False
+
+    def last_calls_summary(self) -> str:
+        recent = self.call_history[-5:]
+        return " → ".join(recent)
+
+
+class SafeReActAgent(ReActAgent):
+    """ReActAgent com detecção de loop e orçamento de custo."""
+
+    def __init__(
+        self,
+        *args,
+        max_cost_usd: float = 0.50,
+        cost_per_1k_tokens: float = 0.002,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.max_cost_usd = max_cost_usd
+        self.cost_per_1k_tokens = cost_per_1k_tokens
+        self.loop_detector = LoopDetector()
+
+    @property
+    def estimated_cost_usd(self) -> float:
+        return (self.total_tokens / 1000) * self.cost_per_1k_tokens
+
+    def _execute_tool(self, tool_name: str, tool_args: dict) -> Any:
+        # Registra a chamada para detecção de loop
+        self.loop_detector.record_call(tool_name, tool_args)
+
+        if self.loop_detector.is_looping():
+            logger.error(
+                f"Loop detectado! Últimas chamadas: {self.loop_detector.last_calls_summary()}"
+            )
+            raise RuntimeError("Agente entrou em loop — execução interrompida.")
+
+        if self.estimated_cost_usd >= self.max_cost_usd:
+            logger.error(
+                f"Orçamento esgotado: ${self.estimated_cost_usd:.4f} >= ${self.max_cost_usd}"
+            )
+            raise RuntimeError(f"Orçamento de custo esgotado (${self.max_cost_usd}).")
+
+        return super()._execute_tool(tool_name, tool_args)
+```
+
+### Custos por iteração
+
+```python
+# Referência de custo (GPT-4o-mini, jan/2025)
+# Input: $0.15/1M tokens | Output: $0.60/1M tokens
+
+def estimate_agent_cost(
+    avg_context_tokens: int,
+    avg_output_tokens: int,
+    num_steps: int,
+    model: str = "gpt-4o-mini",
+) -> dict:
+    """Estima o custo total de uma execução de agente."""
+    prices = {
+        "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+        "gpt-4o": {"input": 5.00 / 1_000_000, "output": 15.00 / 1_000_000},
+        "claude-3-5-haiku": {"input": 0.80 / 1_000_000, "output": 4.00 / 1_000_000},
+    }
+
+    price = prices.get(model, prices["gpt-4o-mini"])
+    total_input = avg_context_tokens * num_steps
+    total_output = avg_output_tokens * num_steps
+
+    cost = total_input * price["input"] + total_output * price["output"]
+    return {
+        "model": model,
+        "estimated_steps": num_steps,
+        "total_tokens": total_input + total_output,
+        "estimated_cost_usd": round(cost, 6),
+        "estimated_cost_brl": round(cost * 5.1, 4),
+    }
+
+
+# Agente de 10 passos com contexto médio de 2000 tokens
+print(estimate_agent_cost(2000, 200, 10, "gpt-4o-mini"))
+# {'model': 'gpt-4o-mini', 'estimated_steps': 10, 'total_tokens': 22000,
+#  'estimated_cost_usd': 0.00042, 'estimated_cost_brl': 0.0021}
+
+print(estimate_agent_cost(2000, 200, 10, "gpt-4o"))
+# {'model': 'gpt-4o', 'estimated_steps': 10, 'total_tokens': 22000,
+#  'estimated_cost_usd': 0.013, 'estimated_cost_brl': 0.066}
+```
+
+---
+
+## 6.7 Tratamento de erros e retry
+
+### Estratégias de tratamento de falha de ferramenta
+
+```python
+from enum import Enum
+
+
+class ToolFailureStrategy(Enum):
+    ABORT = "abort"           # para tudo
+    RETRY = "retry"           # tenta de novo
+    SKIP = "skip"             # continua sem o resultado
+    FALLBACK = "fallback"     # usa alternativa
+
+
+class ResilientAgent(ReActAgent):
+    """
+    Agente com estratégias configuráveis de tratamento de falha.
+    """
+
+    def __init__(
+        self,
+        *args,
+        failure_strategy: ToolFailureStrategy = ToolFailureStrategy.RETRY,
+        tool_retry_limit: int = 2,
+        fallback_tools: dict[str, str] = None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.failure_strategy = failure_strategy
+        self.tool_retry_limit = tool_retry_limit
+        self.fallback_tools = fallback_tools or {}
+        self._tool_attempt_counts: dict[str, int] = {}
+
+    def _execute_tool(self, tool_name: str, tool_args: dict) -> Any:
+        attempt_key = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
+        self._tool_attempt_counts[attempt_key] = (
+            self._tool_attempt_counts.get(attempt_key, 0) + 1
+        )
+
+        result = super()._execute_tool(tool_name, tool_args)
+
+        # Verifica se o resultado indica erro
+        if isinstance(result, dict) and "erro" in result:
+            attempts = self._tool_attempt_counts[attempt_key]
+
+            if self.failure_strategy == ToolFailureStrategy.RETRY:
+                if attempts <= self.tool_retry_limit:
+                    logger.info(f"Retentando {tool_name} (tentativa {attempts})")
+                    time.sleep(1.0)
+                    return self._execute_tool(tool_name, tool_args)
+                else:
+                    return {
+                        "erro": result["erro"],
+                        "mensagem_para_agente": (
+                            f"A ferramenta {tool_name} falhou após {attempts} tentativas. "
+                            "Considere uma abordagem alternativa ou informe ao usuário."
+                        )
+                    }
+
+            elif self.failure_strategy == ToolFailureStrategy.FALLBACK:
+                fallback_name = self.fallback_tools.get(tool_name)
+                if fallback_name and fallback_name in self.tool_functions:
+                    logger.info(f"Usando fallback {fallback_name} para {tool_name}")
+                    return super()._execute_tool(fallback_name, tool_args)
+
+            elif self.failure_strategy == ToolFailureStrategy.SKIP:
+                return {
+                    "aviso": f"Ferramenta {tool_name} indisponível. Continuando sem esse dado."
+                }
+
+        return result
+```
+
+### Graceful degradation
+
+```python
+def build_agent_with_degradation(
+    primary_tools: dict,
+    fallback_message: str = "Alguns serviços estão temporariamente indisponíveis.",
+) -> ReActAgent:
+    """
+    Cria um agente que degrada graciosamente quando ferramentas falham.
+    Ferramentas que falham retornam mensagens úteis em vez de lançar exceções.
+    """
+    wrapped_tools = {}
+
+    for name, fn in primary_tools.items():
+        def make_wrapper(func, tool_name):
+            @functools.wraps(func)
+            def wrapper(**kwargs):
+                try:
+                    return func(**kwargs)
+                except Exception as e:
+                    logger.error(f"Ferramenta {tool_name} falhou: {e}")
+                    return {
+                        "disponivel": False,
+                        "ferramenta": tool_name,
+                        "erro": str(e),
+                        "instrucao": f"{fallback_message} Informe o usuário e ofereça alternativas."
+                    }
+            return wrapper
+        wrapped_tools[name] = make_wrapper(fn, name)
+
+    return ReActAgent(
+        tools=TOOL_DEFINITIONS,
+        tool_functions=wrapped_tools,
+    )
+```
+
+---
+
+## 6.8 Frameworks: LangGraph e smolagents
+
+### A questão central: framework ou from scratch?
+
+| Critério | Framework | From Scratch |
+|----------|-----------|-------------|
+| **Velocidade inicial** | Alta | Baixa |
+| **Controle** | Limitado pela abstração | Total |
+| **Debugging** | Difícil (muita magia) | Fácil (você escreveu) |
+| **Manutenção** | Depende do projeto sobreviver | Você controla |
+| **Complexidade** | Esconde complexidade | Você expõe e entende |
+
+**Quando usar framework:** prototipagem rápida, equipe sem experiência com agentes, fluxos complexos com muitos nós.  
+**Quando fazer from scratch:** você entende o que está fazendo, precisa de controle total, o framework adiciona mais complexidade do que resolve.
+
+### LangGraph: orquestração baseada em grafos
+
+LangGraph representa o fluxo do agente como um grafo dirigido. Cada nó é uma função Python. Arestas definem o fluxo condicional.
+
+```python
+# pip install langgraph langchain-openai
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from typing import TypedDict, Annotated
 import operator
+
 
 class AgentState(TypedDict):
     messages: Annotated[list, operator.add]
     step_count: int
+    max_steps: int
+
 
 def should_continue(state: AgentState) -> str:
     """Decide se continua ou para."""
     messages = state["messages"]
     last_message = messages[-1]
-    
+
+    if state["step_count"] >= state["max_steps"]:
+        return "end"
+
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "tools"
-    return END
 
-def call_model(state: AgentState) -> AgentState:
-    """Nó: chama o LLM."""
-    # Usar Ollama (gratuito) ou qualquer provedor compatível com OpenAI
-    model = ChatOpenAI(
-        model="llama3.2",
-        base_url="http://localhost:11434/v1",
-        api_key="ollama"
+    return "end"
+
+
+def call_model(state: AgentState) -> dict:
+    """Nó que chama o LLM."""
+    llm = ChatOpenAI(model="gpt-4o-mini").bind_tools(TOOL_DEFINITIONS)
+    response = llm.invoke(state["messages"])
+    return {
+        "messages": [response],
+        "step_count": state["step_count"] + 1,
+    }
+
+
+def call_tools(state: AgentState) -> dict:
+    """Nó que executa as ferramentas."""
+    last_message = state["messages"][-1]
+    tool_messages = []
+
+    for tool_call in last_message.tool_calls:
+        fn = TOOL_FUNCTIONS.get(tool_call["name"])
+        if fn:
+            result = fn(**tool_call["args"])
+        else:
+            result = {"erro": f"Ferramenta desconhecida: {tool_call['name']}"}
+
+        tool_messages.append(ToolMessage(
+            content=json.dumps(result, ensure_ascii=False),
+            tool_call_id=tool_call["id"],
+        ))
+
+    return {"messages": tool_messages}
+
+
+def build_langgraph_agent() -> StateGraph:
+    workflow = StateGraph(AgentState)
+
+    workflow.add_node("agent", call_model)
+    workflow.add_node("tools", call_tools)
+
+    workflow.set_entry_point("agent")
+
+    workflow.add_conditional_edges(
+        "agent",
+        should_continue,
+        {"tools": "tools", "end": END},
     )
-    response = model.invoke(state["messages"])
-    return {"messages": [response], "step_count": state["step_count"] + 1}
+    workflow.add_edge("tools", "agent")
 
-def call_tools(state: AgentState) -> AgentState:
-    """Nó: executa as ferramentas."""
-    # ... executar tool calls
-    return {"messages": [tool_result]}
+    return workflow.compile()
 
-# Construir o grafo
-workflow = StateGraph(AgentState)
-workflow.add_node("agent", call_model)
-workflow.add_node("tools", call_tools)
 
-workflow.set_entry_point("agent")
-workflow.add_conditional_edges("agent", should_continue)
-workflow.add_edge("tools", "agent")
-
-app = workflow.compile()
+# Uso
+graph = build_langgraph_agent()
+result = graph.invoke({
+    "messages": [HumanMessage(content="Qual o status do pedido PED-001?")],
+    "step_count": 0,
+    "max_steps": 5,
+})
+print(result["messages"][-1].content)
 ```
 
-### 5.7.3 LangChain — Ecossistema Completo
-
-LangChain oferece uma interface unificada para criar agentes com diversas ferramentas:
-
-```bash
-pip install langchain langchain-community langchain-openai
-```
+### smolagents: minimalismo e transparência
 
 ```python
-from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.tools import tool
+# pip install smolagents
+from smolagents import CodeAgent, tool, HfApiModel
 
-# Usar modelo local via Ollama (gratuito)
-llm = ChatOpenAI(
-    model="llama3.2",
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
-)
 
 @tool
-def buscar_cep(cep: str) -> str:
-    """Busca informações de um CEP brasileiro."""
-    import requests
-    resp = requests.get(f"https://viacep.com.br/ws/{cep}/json/")
-    if resp.status_code == 200:
-        dados = resp.json()
-        return f"{dados.get('logradouro', '')}, {dados.get('bairro', '')} - {dados.get('localidade', '')}/{dados.get('uf', '')}"
-    return "CEP não encontrado"
+def buscar_clima(cidade: str) -> str:
+    """
+    Busca o clima atual de uma cidade.
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "Você é um assistente útil. Use ferramentas quando necessário."),
-    ("placeholder", "{chat_history}"),
-    ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}"),
-])
+    Args:
+        cidade: Nome da cidade (ex: "Recife", "São Paulo")
 
-agent = create_tool_calling_agent(llm, [buscar_cep], prompt)
-executor = AgentExecutor(agent=agent, tools=[buscar_cep], verbose=True)
+    Returns:
+        String descrevendo o clima atual
+    """
+    # Implementação real usaria API de clima
+    return f"Em {cidade}: 28°C, parcialmente nublado, 65% umidade"
 
-resultado = executor.invoke({"input": "Qual endereço do CEP 01001-000?"})
-print(resultado["output"])
-```
 
-### Comparação de Frameworks
+@tool
+def converter_temperatura(celsius: float, para: str) -> float:
+    """
+    Converte temperatura de Celsius para outra unidade.
 
-| Framework | Licença | Complexidade | Funciona com Ollama? | Melhor Para |
-|-----------|---------|-------------|---------------------|-------------|
-| **smolagents** | Apache 2.0 | Simples | ✅ | Aprendizado, agentes simples |
-| **LangGraph** | MIT | Intermediária | ✅ | Fluxos complexos, multi-agente |
-| **LangChain** | MIT | Intermediária | ✅ | Ecossistema completo, RAG + agentes |
-| **CrewAI** | MIT | Simples | ✅ | Multi-agente com papéis definidos |
+    Args:
+        celsius: Temperatura em graus Celsius
+        para: Unidade de destino ('fahrenheit' ou 'kelvin')
 
-> **🎓 Recomendação para o curso:** Comece com **smolagents** (mais simples e educativo), depois avance para **LangGraph** quando precisar de fluxos mais complexos. Todos funcionam com **Ollama** (gratuito).
+    Returns:
+        Temperatura convertida
+    """
+    if para == "fahrenheit":
+        return celsius * 9/5 + 32
+    elif para == "kelvin":
+        return celsius + 273.15
+    raise ValueError(f"Unidade desconhecida: {para}")
 
----
 
-## 5.8 Ferramentas Comuns para Agentes
-
-| Ferramenta | Uso | Biblioteca | Gratuita? |
-|-----------|-----|-----------|-----------|
-| Busca web | Informações atuais | DuckDuckGo Search, SearXNG | ✅ |
-| Execução de código | Python, bash | subprocess, smolagents | ✅ |
-| Busca em arquivos | PDFs, docs | LlamaIndex | ✅ |
-| APIs externas | CEP, clima, dados | requests, httpx | ✅ |
-| Banco de dados | SQL queries | SQLAlchemy | ✅ |
-| Navegador web | Scraping, interação | Playwright, Selenium | ✅ |
-| Cálculos | Matemática | Python stdlib | ✅ |
-
-> **📌 Nota:** Todas as ferramentas listadas são gratuitas e open-source, adequadas para uso educacional.
-
----
-
-## 5.9 Agentes Multi-Tool Avançados
-
-Agentes reais costumam ter acesso a **várias ferramentas especializadas**. Nesta seção, construímos agentes mais sofisticados que combinam múltiplas capacidades.
-
-### 5.9.1 Agente com RAG como Ferramenta
-
-Em vez de usar RAG isoladamente, podemos integrá-lo como **uma ferramenta** de um agente. Assim, o agente decide quando consultar a base de conhecimento:
-
-```python
-from openai import OpenAI
-import json
-import numpy as np
-
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
+# smolagents usa Code Agent por padrão: o LLM gera código Python que é executado
+agent = CodeAgent(
+    tools=[buscar_clima, converter_temperatura],
+    model=HfApiModel("Qwen/Qwen2.5-Coder-32B-Instruct"),
 )
 
-# --- Base de conhecimento simples (em produção: banco vetorial) ---
-KNOWLEDGE_BASE = [
-    {"id": 1, "content": "A política de devolução permite troca em até 30 dias com nota fiscal."},
-    {"id": 2, "content": "O horário de atendimento é de segunda a sexta, das 8h às 18h."},
-    {"id": 3, "content": "Frete grátis para compras acima de R$ 200,00 na região Sudeste."},
-    {"id": 4, "content": "Parcelamento em até 12x sem juros no cartão de crédito."},
-    {"id": 5, "content": "Garantia estendida disponível por R$ 49,90 para eletrônicos."},
-]
-
-def search_knowledge_base(query: str) -> str:
-    """Busca na base de conhecimento por correspondência simples de palavras."""
-    query_words = set(query.lower().split())
-    scored = []
-    for doc in KNOWLEDGE_BASE:
-        doc_words = set(doc["content"].lower().split())
-        overlap = len(query_words & doc_words)
-        if overlap > 0:
-            scored.append((overlap, doc["content"]))
-    scored.sort(reverse=True)
-    if scored:
-        return "\n".join(text for _, text in scored[:3])
-    return "Nenhuma informação encontrada na base de conhecimento."
-
-def get_order_status(order_id: str) -> dict:
-    """Consulta status de um pedido."""
-    orders = {
-        "PED-001": {"status": "enviado", "previsao": "2025-01-20", "rastreio": "BR123456789"},
-        "PED-002": {"status": "em separação", "previsao": "2025-01-22", "rastreio": None},
-    }
-    return orders.get(order_id, {"erro": "Pedido não encontrado"})
-
-def calculate_shipping(cep: str, weight_kg: float) -> dict:
-    """Calcula frete estimado."""
-    base_cost = 15.0
-    cost_per_kg = 2.5
-    total = base_cost + (weight_kg * cost_per_kg)
-    return {"cep": cep, "peso_kg": weight_kg, "frete": f"R$ {total:.2f}", "prazo": "5-7 dias úteis"}
-
-TOOLS_MAP = {
-    "search_knowledge_base": search_knowledge_base,
-    "get_order_status": get_order_status,
-    "calculate_shipping": calculate_shipping,
-}
-
-TOOLS_SCHEMA = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_knowledge_base",
-            "description": "Busca informações na base de conhecimento da empresa (políticas, FAQ, procedimentos). Use para dúvidas sobre regras e procedimentos.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Pergunta ou termos de busca"}
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_order_status",
-            "description": "Consulta o status de um pedido pelo ID (formato PED-XXX)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "order_id": {"type": "string", "description": "ID do pedido (ex: PED-001)"}
-                },
-                "required": ["order_id"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate_shipping",
-            "description": "Calcula o custo e prazo de frete para um CEP e peso",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "cep": {"type": "string", "description": "CEP de destino"},
-                    "weight_kg": {"type": "number", "description": "Peso em quilogramas"}
-                },
-                "required": ["cep", "weight_kg"]
-            }
-        }
-    }
-]
-
-def run_support_agent(user_message: str, max_steps: int = 10) -> str:
-    """Agente de suporte ao cliente com RAG + ferramentas."""
-    messages = [
-        {"role": "system", "content": (
-            "Você é um agente de suporte ao cliente. Você tem acesso a:\n"
-            "- Base de conhecimento da empresa (políticas, FAQ)\n"
-            "- Sistema de consulta de pedidos\n"
-            "- Calculadora de frete\n"
-            "Use as ferramentas apropriadas para responder com precisão."
-        )},
-        {"role": "user", "content": user_message}
-    ]
-    
-    for step in range(max_steps):
-        response = client.chat.completions.create(
-            model="llama3.2", messages=messages, tools=TOOLS_SCHEMA, tool_choice="auto"
-        )
-        msg = response.choices[0].message
-        
-        if response.choices[0].finish_reason == "stop":
-            return msg.content
-        
-        if msg.tool_calls:
-            messages.append(msg)
-            for tc in msg.tool_calls:
-                func = TOOLS_MAP.get(tc.function.name)
-                args = json.loads(tc.function.arguments)
-                result = func(**args) if func else {"erro": "Ferramenta não encontrada"}
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(result, ensure_ascii=False) if isinstance(result, dict) else result
-                })
-    
-    return "Não foi possível resolver. Encaminhando para atendente humano."
-
-# Exemplos de uso
-print(run_support_agent("Qual é a política de devolução?"))
-print(run_support_agent("Onde está meu pedido PED-001?"))
-print(run_support_agent("Quanto custa o frete para CEP 50000-000, pacote de 3kg?"))
+result = agent.run("Qual o clima em Recife e quanto é essa temperatura em Fahrenheit?")
+print(result)
 ```
 
-### 5.9.2 Agente de Pesquisa com Múltiplas Ferramentas
+### Comparação honesta dos frameworks
 
-Um agente que busca informações, processa dados e gera relatórios:
+| Framework | Pontos fortes | Pontos fracos | Melhor para |
+|-----------|--------------|---------------|-------------|
+| **LangGraph** | Fluxos complexos, visualização do grafo, estado persistente | Verboso, curva de aprendizado alta, muito boilerplate | Fluxos com muitos nós e ramificações complexas |
+| **smolagents** | Simples, explícito, código Python real | Menos flexível para fluxos complexos | Agentes simples e médios, prototipagem |
+| **AutoGen** | Multi-agente nativo, conversação entre agentes | Complexo, difícil de debugar | Sistemas com múltiplos agentes colaborativos |
+| **CrewAI** | Abstração de "papéis" intuitiva | Pouco controle de baixo nível | Simulação de equipes, casos de negócio |
+| **From scratch** | Controle total, simples de debugar | Você implementa tudo | Produção onde você entende cada linha |
+
+---
+
+## 6.9 Sistemas multi-agente
+
+### Quando um agente não é suficiente
+
+Um agente único fica limitado por:
+- **Contexto**: acumular muitas informações ao longo de muitos passos infla o contexto e degrada a qualidade
+- **Especialização**: um agente generalista é pior do que especialistas em tarefas específicas
+- **Custo de coordenação**: tarefas longas ficam caras com um agente só
+
+### Padrão Orquestrador + Especialistas
 
 ```python
-from openai import OpenAI
-import json
+class OrchestratorAgent:
+    """
+    Agente que delega para especialistas.
+    O orquestrador entende a intenção e rota para o agente correto.
+    """
+
+    def __init__(self, specialists: dict[str, ReActAgent]):
+        self.specialists = specialists
+        self.llm = OpenAI()
+
+    def route(self, task: str) -> str:
+        """Usa LLM para decidir qual especialista usar."""
+        specialist_list = "\n".join(
+            f"- {name}" for name in self.specialists.keys()
+        )
+        response = self.llm.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Dado o seguinte especialistas disponíveis:\n{specialist_list}\n\n"
+                    f"Qual deve processar esta tarefa: '{task}'\n\n"
+                    f"Responda APENAS com o nome exato do especialista."
+                )
+            }],
+        )
+        specialist_name = response.choices[0].message.content.strip()
+        return specialist_name
+
+    def run(self, task: str) -> AgentResult:
+        specialist_name = self.route(task)
+        specialist = self.specialists.get(specialist_name)
+
+        if specialist is None:
+            logger.warning(f"Especialista '{specialist_name}' não encontrado, usando fallback")
+            # Usa o primeiro especialista como fallback
+            specialist = next(iter(self.specialists.values()))
+
+        logger.info(f"Tarefa roteada para: {specialist_name}")
+        return specialist.run(task)
+
+
+# Configuração
+agente_pedidos = ReActAgent(
+    tools=[TOOL_DEFINITIONS[0]],
+    tool_functions={"buscar_pedido": buscar_pedido_mock},
+    system_prompt="Você é especialista em pedidos e entregas.",
+)
+
+agente_estoque = ReActAgent(
+    tools=[TOOL_DEFINITIONS[1]],
+    tool_functions={"verificar_estoque": verificar_estoque_mock},
+    system_prompt="Você é especialista em estoque e disponibilidade de produtos.",
+)
+
+orquestrador = OrchestratorAgent(
+    specialists={
+        "agente_pedidos": agente_pedidos,
+        "agente_estoque": agente_estoque,
+    }
+)
+```
+
+### Comunicação entre agentes: passagem de contexto estruturado
+
+```python
+import dataclasses
 from datetime import datetime
 
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
-)
 
-# --- Ferramentas do agente de pesquisa ---
+@dataclasses.dataclass
+class AgentMessage:
+    """Mensagem estruturada entre agentes."""
+    sender: str
+    recipient: str
+    content: str
+    metadata: dict = dataclasses.field(default_factory=dict)
+    timestamp: str = dataclasses.field(
+        default_factory=lambda: datetime.now().isoformat()
+    )
 
-def search_web(query: str) -> str:
-    """Simula busca na web (em produção: DuckDuckGo, SearXNG, Tavily)."""
-    mock_results = {
-        "PIB Brasil 2024": "O PIB do Brasil cresceu 3,1% em 2024, atingindo R$ 11,3 trilhões.",
-        "população Brasil": "A população estimada do Brasil em 2024 é de 212 milhões de habitantes.",
-        "inflação Brasil": "O IPCA acumulado em 2024 foi de 4,62%.",
-    }
-    for key, val in mock_results.items():
-        if key.lower() in query.lower():
-            return val
-    return f"Resultados para '{query}': informação genérica encontrada."
 
-def extract_data(text: str, fields: str) -> dict:
-    """Extrai dados estruturados de um texto."""
-    # Em produção: use o LLM para extração ou regex
-    return {
-        "texto_original": text[:200],
-        "campos_solicitados": fields,
-        "dados_extraidos": {"nota": "Dados extraídos com sucesso (simulado)"}
-    }
+class AgentBus:
+    """Barramento simples de mensagens entre agentes."""
 
-def save_report(title: str, content: str) -> dict:
-    """Salva um relatório (simulado — em produção: salva em arquivo ou BD)."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    return {
-        "status": "salvo",
-        "titulo": title,
-        "timestamp": timestamp,
-        "tamanho": f"{len(content)} caracteres"
-    }
+    def __init__(self):
+        self._queue: list[AgentMessage] = []
+        self._agents: dict[str, ReActAgent] = {}
 
-def calculate(expression: str) -> str:
-    """Calcula uma expressão matemática."""
-    try:
-        allowed = {"__builtins__": {}}
-        return str(eval(expression, allowed))
-    except Exception as e:
-        return f"Erro: {e}"
+    def register(self, name: str, agent: ReActAgent) -> None:
+        self._agents[name] = agent
 
-TOOLS_MAP = {
-    "search_web": search_web,
-    "extract_data": extract_data,
-    "save_report": save_report,
-    "calculate": calculate,
-}
+    def send(self, message: AgentMessage) -> None:
+        self._queue.append(message)
+        logger.info(f"[{message.sender}] → [{message.recipient}]: {message.content[:80]}")
 
-TOOLS_SCHEMA = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_web",
-            "description": "Busca informações na internet sobre qualquer tema",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "Termos de busca"}},
-                "required": ["query"]
+    def process_next(self) -> Optional[AgentResult]:
+        if not self._queue:
+            return None
+        message = self._queue.pop(0)
+        agent = self._agents.get(message.recipient)
+        if agent is None:
+            logger.error(f"Agente '{message.recipient}' não registrado")
+            return None
+        return agent.run(message.content)
+```
+
+---
+
+## 6.10 Testando agentes
+
+### O desafio de testar sistemas não-determinísticos
+
+Testar agentes é difícil por três razões:
+1. **Não-determinismo**: o mesmo prompt pode gerar chamadas de ferramentas diferentes
+2. **Efeitos colaterais**: ferramentas modificam estado real (banco de dados, APIs)
+3. **Custo**: cada teste chama o LLM
+
+### Mockando ferramentas para testes
+
+```python
+import unittest
+from unittest.mock import MagicMock, patch
+
+
+class MockToolResponse:
+    """Resposta pré-configurada para ferramentas em testes."""
+
+    def __init__(self, responses: dict[str, Any]):
+        self.responses = responses
+        self.call_log: list[tuple] = []
+
+    def __call__(self, **kwargs) -> Any:
+        self.call_log.append(kwargs)
+        key = json.dumps(kwargs, sort_keys=True)
+        if key in self.responses:
+            return self.responses[key]
+        # Retorno genérico se não configurado
+        return {"status": "ok", "dados": "mock_data"}
+
+
+class TestReActAgent(unittest.TestCase):
+
+    def setUp(self):
+        self.mock_buscar_pedido = MockToolResponse({
+            '{"pedido_id": "PED-001"}': {
+                "pedido_id": "PED-001",
+                "status": "entregue",
+                "data_entrega": "2024-03-10",
             }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "extract_data",
-            "description": "Extrai dados estruturados de um texto bruto",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Texto de onde extrair dados"},
-                    "fields": {"type": "string", "description": "Campos a extrair (ex: 'nome, data, valor')"}
-                },
-                "required": ["text", "fields"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "save_report",
-            "description": "Salva um relatório com título e conteúdo",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Título do relatório"},
-                    "content": {"type": "string", "description": "Conteúdo completo do relatório"}
-                },
-                "required": ["title", "content"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate",
-            "description": "Calcula expressões matemáticas",
-            "parameters": {
-                "type": "object",
-                "properties": {"expression": {"type": "string", "description": "Expressão matemática"}},
-                "required": ["expression"]
-            }
-        }
-    }
-]
+        })
 
-def run_research_agent(task: str, max_steps: int = 15) -> str:
-    """Agente de pesquisa que busca, analisa e gera relatórios."""
-    messages = [
-        {"role": "system", "content": (
-            "Você é um agente de pesquisa. Para completar tarefas:\n"
-            "1. Use search_web para buscar informações\n"
-            "2. Use extract_data para estruturar dados encontrados\n"
-            "3. Use calculate para fazer cálculos necessários\n"
-            "4. Use save_report para salvar o relatório final\n"
-            "Seja metódico: busque dados, analise e depois gere o relatório."
-        )},
-        {"role": "user", "content": task}
+        self.agent = ReActAgent(
+            tools=TOOL_DEFINITIONS[:1],
+            tool_functions={"buscar_pedido": self.mock_buscar_pedido},
+            model="gpt-4o-mini",
+            max_steps=5,
+        )
+
+    def test_agent_uses_tool_for_order_query(self):
+        """Agente deve chamar buscar_pedido quando perguntado sobre um pedido."""
+        # Este teste é semi-determinístico: o LLM pode variar
+        # Mas a intenção (chamar a ferramenta) deve ser consistente
+        result = self.agent.run("Qual o status do pedido PED-001?")
+
+        self.assertTrue(result.success)
+        # Verifica que a ferramenta foi chamada
+        self.assertEqual(len(self.mock_buscar_pedido.call_log), 1)
+        self.assertEqual(
+            self.mock_buscar_pedido.call_log[0]["pedido_id"],
+            "PED-001"
+        )
+        # Verifica que a resposta menciona o status
+        self.assertIn("entregue", result.answer.lower())
+
+    def test_agent_handles_tool_error_gracefully(self):
+        """Agente deve lidar com erros de ferramenta sem travar."""
+        mock_erro = MagicMock(return_value={"erro": "Pedido não encontrado"})
+
+        agent = ReActAgent(
+            tools=TOOL_DEFINITIONS[:1],
+            tool_functions={"buscar_pedido": mock_erro},
+            model="gpt-4o-mini",
+            max_steps=3,
+        )
+
+        result = agent.run("Qual o status do pedido PED-999?")
+        # O agente deve completar (não lançar exceção) e comunicar o erro
+        self.assertIsNotNone(result.answer)
+
+
+def create_deterministic_test_set() -> list[dict]:
+    """
+    Conjunto de testes determinístico: casos onde o comportamento correto
+    é claro e verificável independente do não-determinismo do LLM.
+    """
+    return [
+        {
+            "name": "pedido_existente",
+            "input": "Status do PED-001",
+            "expected_tool_call": "buscar_pedido",
+            "expected_tool_args": {"pedido_id": "PED-001"},
+            "mock_response": {"status": "entregue"},
+            "validate_answer": lambda ans: "entregue" in ans.lower(),
+        },
+        {
+            "name": "pedido_inexistente",
+            "input": "Status do pedido XYZ-999",
+            "expected_tool_call": "buscar_pedido",
+            "mock_response": {"erro": "Não encontrado"},
+            "validate_answer": lambda ans: len(ans) > 0,
+        },
     ]
-    
-    for step in range(max_steps):
-        response = client.chat.completions.create(
-            model="llama3.2", messages=messages, tools=TOOLS_SCHEMA, tool_choice="auto"
-        )
-        msg = response.choices[0].message
-        
-        if response.choices[0].finish_reason == "stop":
-            return msg.content
-        
-        if msg.tool_calls:
-            messages.append(msg)
-            for tc in msg.tool_calls:
-                func = TOOLS_MAP.get(tc.function.name)
-                args = json.loads(tc.function.arguments)
-                print(f"  🔧 [{tc.function.name}] {args}")
-                result = func(**args) if func else {"erro": "Ferramenta não encontrada"}
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(result, ensure_ascii=False) if isinstance(result, dict) else str(result)
-                })
-    
-    return "Pesquisa incompleta — limite de passos atingido."
-
-# Exemplo
-print(run_research_agent(
-    "Pesquise sobre o PIB e a população do Brasil em 2024 e calcule o PIB per capita. "
-    "Salve um relatório com os resultados."
-))
 ```
 
 ---
 
-## 5.10 Debugging e Observabilidade de Agentes
+## 6.11 Panorama do ecossistema atual
 
-Agentes autônomos podem ser difíceis de depurar. Logging e rastreamento adequados são essenciais.
+Uma avaliação honesta do que está disponível em janeiro de 2025:
 
-### 5.10.1 Logging de Decisões e Tool Calls
+| Framework | Maturidade | Comunidade | Estabilidade de API | Ideal para |
+|-----------|-----------|-----------|--------------------|----|
+| **LangChain/LangGraph** | Alta | Muito grande | Média (muda muito) | Fluxos complexos, muitas integrações |
+| **smolagents (HuggingFace)** | Média | Crescendo | Alta | Agentes simples e médios |
+| **AutoGen (Microsoft)** | Alta | Grande | Alta | Multi-agente, pesquisa |
+| **CrewAI** | Média | Média | Média | Simulação de equipes com papéis |
+| **Pydantic AI** | Baixa (novo) | Pequena | Baixa (nova) | Validação tipada de respostas |
+| **From scratch** | — | — | — | Produção com controle total |
 
-```python
-import logging
-import json
-from datetime import datetime
-from openai import OpenAI
+### LangChain/LangGraph
 
-# Configurar logging estruturado
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("agent_log.jsonl"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("agent")
+**Pontos fortes:** ecossistema enorme, integrações prontas com quase tudo, LangGraph para fluxos complexos.  
+**Pontos fracos:** abstração excessiva, debugging difícil, API muda frequentemente entre versões, curva de aprendizado íngreme.  
+**Veredicto:** se você precisar de integração rápida com banco vetorial + LLM + agente, LangChain entrega. Se precisar de controle em produção, você vai refatorar para algo mais simples.
 
-class ObservableAgent:
-    def __init__(self, model: str = "llama3.2"):
-        self.client = OpenAI(
-            base_url="http://localhost:11434/v1",
-            api_key="ollama"
-        )
-        self.model = model
-        self.trace = []  # histórico completo de execução
-    
-    def log_event(self, event_type: str, data: dict):
-        """Registra um evento no trace do agente."""
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "type": event_type,
-            **data
-        }
-        self.trace.append(entry)
-        logger.info(json.dumps(entry, ensure_ascii=False))
-    
-    def run(self, user_message: str, tools: list, tools_map: dict, max_steps: int = 10) -> str:
-        self.trace = []
-        self.log_event("start", {"input": user_message})
-        
-        messages = [
-            {"role": "system", "content": "Você é um assistente útil com acesso a ferramentas."},
-            {"role": "user", "content": user_message}
-        ]
-        
-        for step in range(max_steps):
-            self.log_event("llm_call", {"step": step + 1, "message_count": len(messages)})
-            
-            response = self.client.chat.completions.create(
-                model=self.model, messages=messages, tools=tools, tool_choice="auto"
-            )
-            msg = response.choices[0].message
-            
-            if response.choices[0].finish_reason == "stop":
-                self.log_event("finish", {"response": msg.content[:200], "total_steps": step + 1})
-                return msg.content
-            
-            if msg.tool_calls:
-                messages.append(msg)
-                for tc in msg.tool_calls:
-                    args = json.loads(tc.function.arguments)
-                    self.log_event("tool_call", {
-                        "tool": tc.function.name,
-                        "args": args
-                    })
-                    
-                    try:
-                        func = tools_map[tc.function.name]
-                        result = func(**args)
-                        self.log_event("tool_result", {
-                            "tool": tc.function.name,
-                            "result": str(result)[:500]
-                        })
-                    except Exception as e:
-                        result = {"erro": str(e)}
-                        self.log_event("tool_error", {
-                            "tool": tc.function.name,
-                            "error": str(e)
-                        })
-                    
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(result, ensure_ascii=False) if isinstance(result, dict) else str(result)
-                    })
-        
-        self.log_event("timeout", {"max_steps": max_steps})
-        return "Limite de passos atingido."
-    
-    def print_trace(self):
-        """Exibe o trace completo de forma legível."""
-        print("\n📋 Trace de Execução do Agente:")
-        print("=" * 50)
-        for entry in self.trace:
-            ts = entry["timestamp"].split("T")[1][:8]
-            etype = entry["type"]
-            if etype == "tool_call":
-                print(f"  [{ts}] 🔧 {entry['tool']}({entry['args']})")
-            elif etype == "tool_result":
-                print(f"  [{ts}] 📥 → {entry['result'][:100]}")
-            elif etype == "tool_error":
-                print(f"  [{ts}] ❌ Erro: {entry['error']}")
-            elif etype == "finish":
-                print(f"  [{ts}] ✅ Finalizado em {entry['total_steps']} passos")
-            else:
-                print(f"  [{ts}] {etype}: {json.dumps({k: v for k, v in entry.items() if k not in ('timestamp', 'type')}, ensure_ascii=False)[:100]}")
+### smolagents
+
+**Pontos fortes:** código explícito, fácil de entender e modificar, Code Agent é diferencial (o LLM escreve código Python que é executado).  
+**Pontos fracos:** menos integrações prontas, ecossistema menor.  
+**Veredicto:** para 80% dos casos de agentes simples e médios, smolagents é a escolha mais sã. Especialmente se você valoriza código legível.
+
+### AutoGen
+
+**Pontos fortes:** multi-agente nativo, bom para sistemas onde agentes conversam entre si, pesquisa ativa da Microsoft.  
+**Pontos fracos:** complexo para casos simples, conversação entre agentes pode ser difícil de controlar.  
+**Veredicto:** use quando o sistema realmente precisa de múltiplos agentes com papéis distintos colaborando.
+
+### CrewAI
+
+**Pontos fortes:** abstração de "crew" e "papéis" é intuitiva para casos de negócio.  
+**Pontos fracos:** abstração pode esconder problemas, difícil de customizar profundamente.  
+**Veredicto:** bom para demos e prototipagem. Em produção, a abstração costuma ser insuficiente.
+
+### A recomendação prática
+
 ```
+Complexidade baixa (1-3 ferramentas, fluxo simples)?
+  → From scratch ou smolagents
 
-### 5.10.2 Modos de Falha Comuns
+Complexidade média (múltiplas ferramentas, algum fluxo condicional)?
+  → smolagents ou LangGraph
 
-| Problema | Sintoma | Solução |
-|----------|---------|---------|
-| **Loop infinito** | Agente chama a mesma ferramenta repetidamente | Limitar `max_steps`, detectar repetições |
-| **Ferramenta errada** | Agente escolhe ferramenta inadequada | Melhorar descrições das ferramentas |
-| **Argumentos inválidos** | JSON mal-formado ou tipos errados | Validar argumentos antes de executar |
-| **Alucinação de ferramentas** | Agente tenta chamar ferramenta inexistente | Verificar se `func_name in TOOLS_MAP` |
-| **Perda de contexto** | Agente esquece informações anteriores | Resumir histórico, usar memória explícita |
-| **Custo descontrolado** | Muitas chamadas ao LLM sem convergir | Definir limites de tokens e passos |
+Fluxo altamente complexo com muitos nós e estado persistente?
+  → LangGraph
 
-```python
-# Exemplo: detectando loops no agente
-def detect_loop(messages: list, window: int = 4) -> bool:
-    """Detecta se o agente está em loop (mesmas tool calls repetidas)."""
-    tool_calls = []
-    for msg in messages:
-        if hasattr(msg, "tool_calls") and msg.tool_calls:
-            for tc in msg.tool_calls:
-                tool_calls.append(f"{tc.function.name}:{tc.function.arguments}")
-    
-    if len(tool_calls) < window:
-        return False
-    
-    # Verifica se as últimas N chamadas são iguais
-    recent = tool_calls[-window:]
-    return len(set(recent)) == 1
-```
+Múltiplos agentes colaborando?
+  → AutoGen ou LangGraph multi-agent
 
-### 5.10.3 Observabilidade com Langfuse
-
-O [Langfuse](https://langfuse.com/) é uma plataforma open-source para monitorar e depurar aplicações com LLMs. Ele registra traces, custos e latências automaticamente:
-
-```bash
-pip install langfuse
-```
-
-```python
-from langfuse.openai import OpenAI as LangfuseOpenAI
-import os
-
-# Configurar Langfuse (self-hosted ou cloud gratuito)
-os.environ["LANGFUSE_HOST"] = "http://localhost:3000"  # self-hosted
-os.environ["LANGFUSE_PUBLIC_KEY"] = "pk-..."
-os.environ["LANGFUSE_SECRET_KEY"] = "sk-..."
-
-# Substituir o client OpenAI pelo wrapper do Langfuse
-client = LangfuseOpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
-)
-
-# Toda chamada ao client será automaticamente rastreada no Langfuse
-response = client.chat.completions.create(
-    model="llama3.2",
-    messages=[{"role": "user", "content": "Olá!"}],
-    name="agent-step-1",     # nome do trace (aparece no dashboard)
-    metadata={"agent": "suporte", "step": 1}  # metadados extras
-)
-```
-
-> **💡 Dica:** O Langfuse pode ser executado localmente via Docker (`docker compose up`) e oferece um dashboard visual para analisar traces de agentes, incluindo árvore de chamadas, latência por passo e custo estimado.
-
----
-
-## 5.11 Padrões Práticos para Produção
-
-Ao colocar agentes em ambientes reais, precisamos de mecanismos de resiliência e controle de custos.
-
-### 5.11.1 Timeout e Retry
-
-```python
-import time
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
-)
-
-def call_llm_with_retry(messages: list, tools: list = None,
-                        max_retries: int = 3, timeout: float = 30.0) -> dict:
-    """Chama o LLM com retry e timeout."""
-    for attempt in range(max_retries):
-        try:
-            start = time.time()
-            response = client.chat.completions.create(
-                model="llama3.2",
-                messages=messages,
-                tools=tools,
-                timeout=timeout
-            )
-            elapsed = time.time() - start
-            print(f"  ⏱️  LLM respondeu em {elapsed:.1f}s (tentativa {attempt + 1})")
-            return response
-        except Exception as e:
-            wait_time = 2 ** attempt  # backoff exponencial: 1s, 2s, 4s
-            print(f"  ⚠️  Erro (tentativa {attempt + 1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
-                print(f"  ⏳ Aguardando {wait_time}s antes de tentar novamente...")
-                time.sleep(wait_time)
-            else:
-                raise RuntimeError(f"Falha após {max_retries} tentativas: {e}")
-```
-
-### 5.11.2 Fallback entre Modelos
-
-```python
-from openai import OpenAI
-
-def create_client(provider: str) -> tuple:
-    """Retorna (client, model) para o provedor especificado."""
-    if provider == "ollama":
-        return OpenAI(base_url="http://localhost:11434/v1", api_key="ollama"), "llama3.2"
-    elif provider == "openai":
-        return OpenAI(), "gpt-4o-mini"
-    raise ValueError(f"Provedor desconhecido: {provider}")
-
-def call_with_fallback(messages: list, tools: list = None,
-                       providers: list = None) -> dict:
-    """Tenta provedores em ordem até um funcionar."""
-    if providers is None:
-        providers = ["ollama", "openai"]  # local primeiro, cloud como fallback
-    
-    for provider in providers:
-        try:
-            client, model = create_client(provider)
-            print(f"  🔄 Tentando {provider} ({model})...")
-            response = client.chat.completions.create(
-                model=model, messages=messages, tools=tools, timeout=30.0
-            )
-            print(f"  ✅ Sucesso com {provider}")
-            return response
-        except Exception as e:
-            print(f"  ❌ {provider} falhou: {e}")
-            continue
-    
-    raise RuntimeError("Todos os provedores falharam")
-```
-
-### 5.11.3 Human-in-the-Loop
-
-Para operações sensíveis, o agente deve solicitar aprovação humana antes de executar:
-
-```python
-class HumanInTheLoopAgent:
-    # Ações que sempre precisam de aprovação
-    REQUIRES_APPROVAL = {"send_email", "delete_record", "execute_sql", "transfer_money"}
-    
-    # Ações de baixo risco que podem executar automaticamente
-    AUTO_APPROVE = {"search_web", "calculate", "get_weather", "search_knowledge_base"}
-    
-    def execute_tool(self, tool_name: str, args: dict) -> dict:
-        if tool_name in self.AUTO_APPROVE:
-            return self._run_tool(tool_name, args)
-        
-        if tool_name in self.REQUIRES_APPROVAL:
-            print(f"\n{'='*50}")
-            print(f"⚠️  APROVAÇÃO NECESSÁRIA")
-            print(f"Ferramenta: {tool_name}")
-            print(f"Argumentos: {json.dumps(args, indent=2, ensure_ascii=False)}")
-            print(f"{'='*50}")
-            
-            # Em produção: enviar notificação (Slack, email, webhook)
-            # e aguardar resposta assíncrona
-            aprovado = input("Aprovar execução? (s/n): ").strip().lower() == "s"
-            
-            if aprovado:
-                return self._run_tool(tool_name, args)
-            else:
-                return {"status": "rejeitado", "motivo": "Operação não aprovada pelo usuário"}
-        
-        # Ferramentas desconhecidas são bloqueadas por padrão
-        return {"status": "bloqueado", "motivo": f"Ferramenta '{tool_name}' não está na lista de permitidas"}
-    
-    def _run_tool(self, tool_name: str, args: dict) -> dict:
-        func = TOOLS_MAP.get(tool_name)
-        if func:
-            return func(**args)
-        return {"erro": f"Ferramenta '{tool_name}' não implementada"}
-```
-
-### 5.11.4 Controle de Custos
-
-```python
-class CostAwareAgent:
-    # Custo aproximado por 1K tokens (em USD)
-    COST_PER_1K = {
-        "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-        "gpt-4o": {"input": 0.005, "output": 0.015},
-        "llama3.2": {"input": 0.0, "output": 0.0},  # local = gratuito!
-    }
-    
-    def __init__(self, model: str = "llama3.2", budget_usd: float = 1.0):
-        self.model = model
-        self.budget = budget_usd
-        self.total_cost = 0.0
-        self.total_tokens = {"input": 0, "output": 0}
-    
-    def track_usage(self, response) -> bool:
-        """Registra uso de tokens e verifica se está dentro do orçamento."""
-        usage = response.usage
-        if usage:
-            self.total_tokens["input"] += usage.prompt_tokens
-            self.total_tokens["output"] += usage.completion_tokens
-            
-            costs = self.COST_PER_1K.get(self.model, {"input": 0, "output": 0})
-            step_cost = (
-                (usage.prompt_tokens / 1000) * costs["input"] +
-                (usage.completion_tokens / 1000) * costs["output"]
-            )
-            self.total_cost += step_cost
-        
-        if self.total_cost >= self.budget:
-            print(f"  💰 ORÇAMENTO EXCEDIDO: ${self.total_cost:.4f} / ${self.budget:.2f}")
-            return False  # orçamento estourado
-        return True
-    
-    def get_usage_report(self) -> str:
-        return (
-            f"📊 Uso total: {self.total_tokens['input']} tokens input, "
-            f"{self.total_tokens['output']} tokens output\n"
-            f"💰 Custo total: ${self.total_cost:.4f} / ${self.budget:.2f}\n"
-            f"💡 Dica: Use Ollama (custo $0.00) para desenvolvimento e testes!"
-        )
-```
-
-> **🎓 Dica para o curso:** Use **Ollama** durante o desenvolvimento e testes (custo zero). Reserve APIs pagas para demonstrações com modelos de maior capacidade, quando necessário.
-
----
-
-## 5.12 Segurança em Agentes
-
-Agentes com acesso a ferramentas reais precisam de guardrails:
-
-```python
-class SafeAgent:
-    DANGEROUS_OPERATIONS = ["DELETE", "DROP", "rm -rf"]
-    
-    def execute_tool(self, tool_name: str, args: dict):
-        # 1. Confirmar ações destrutivas
-        if tool_name in ["delete_file", "send_email", "execute_sql"]:
-            if not self._get_human_approval(tool_name, args):
-                return "Operação cancelada pelo usuário"
-        
-        # 2. Detectar operações perigosas
-        for arg_val in args.values():
-            if any(op in str(arg_val).upper() for op in self.DANGEROUS_OPERATIONS):
-                return "Operação bloqueada por segurança"
-        
-        # 3. Limite de tentativas
-        if self.step_count > 20:
-            return "Limite de segurança atingido"
-        
-        return self._execute(tool_name, args)
-    
-    def _get_human_approval(self, tool: str, args: dict) -> bool:
-        print(f"\n⚠️  O agente quer executar: {tool}({args})")
-        return input("Aprovar? (s/n): ").lower() == "s"
+Produção crítica onde você precisa entender cada linha?
+  → From scratch
 ```
 
 ---
 
-## 📌 Resumo da Parte 05
+## �� Resumo da Parte 06
 
-| Conceito | Descrição |
+| Conceito | Definição |
 |----------|-----------|
-| Agente | LLM + ferramentas + loop de execução |
-| ReAct | Padrão: Pensar → Agir → Observar → Repetir |
-| Function Calling | Mecanismo para LLMs solicitarem execução de funções |
-| Tool Definitions | JSON Schema que descreve ferramentas para o modelo |
-| Chamadas Paralelas | Modelo pode solicitar várias ferramentas de uma vez |
-| Function Calling (Ollama) | Suporte nativo via API compatível com OpenAI |
-| Multi-Agente | Múltiplos agentes especializados colaborando |
-| RAG como Ferramenta | Base de conhecimento integrada ao agente |
-| Agente Multi-Tool | Agente com várias ferramentas especializadas |
-| Agente de Pesquisa | Busca, extrai dados e gera relatórios |
-| Observabilidade | Logging, tracing e monitoramento de agentes |
-| Langfuse | Plataforma open-source para monitorar LLM apps |
-| Timeout/Retry | Estratégias de resiliência para chamadas ao LLM |
-| Fallback | Troca automática de provedor em caso de falha |
-| Human-in-the-Loop | Aprovação humana para ações sensíveis |
-| Controle de Custos | Monitoramento de tokens e orçamento |
-| Guardrails | Controles de segurança para agentes autônomos |
-| smolagents | Framework da Hugging Face, simples e open-source |
-| LangGraph | Framework para agentes com fluxo controlado (grafos) |
-| LangChain | Ecossistema completo para LLMs, RAG e agentes |
-
----
+| **Agente** | LLM + ferramentas + loop de execução |
+| **ReAct** | Padrão Reason → Act → Observe para execução de agentes |
+| **Tool definition** | Contrato JSON que descreve uma ferramenta para o LLM |
+| **max_steps** | Circuit breaker básico para evitar loops infinitos |
+| **Loop detector** | Detecção de padrões repetitivos no comportamento do agente |
+| **Orquestrador** | Agente que delega tarefas para agentes especialistas |
+| **Parallel execution** | Execução simultânea de tarefas independentes com ThreadPoolExecutor |
+| **Graceful degradation** | Continuar funcionando (de forma limitada) quando ferramentas falham |
+| **LangGraph** | Framework de orquestração baseado em grafos dirigidos |
+| **smolagents** | Framework minimalista com Code Agent (LLM gera código Python) |
+| **Mock tools** | Ferramentas simuladas para testes determinísticos de agentes |
+| **Custo por iteração** | Cada passo do loop consome tokens; agentes de 10 passos podem ser caros |
 
 ## 🔗 Referências
 
-- [ReAct Paper](https://arxiv.org/abs/2210.03629)
-- [smolagents — Hugging Face](https://github.com/huggingface/smolagents)
-- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
-- [LangChain Documentation](https://python.langchain.com/docs/)
-- [CrewAI — Multi-Agent Framework](https://github.com/crewAIInc/crewAI)
-- [Ollama — Modelos locais gratuitos](https://ollama.ai)
+- [ReAct: Synergizing Reasoning and Acting in Language Models (paper original)](https://arxiv.org/abs/2210.03629)
+- [LangGraph documentação](https://langchain-ai.github.io/langgraph/)
+- [smolagents documentação (HuggingFace)](https://huggingface.co/docs/smolagents)
+- [AutoGen (Microsoft)](https://github.com/microsoft/autogen)
+- [CrewAI](https://github.com/crewAIInc/crewAI)
 - [OpenAI Function Calling](https://platform.openai.com/docs/guides/function-calling)
-- [Langfuse — LLM Observability](https://langfuse.com/)
+- [Anthropic Tool Use](https://docs.anthropic.com/en/docs/build-with-claude/tool-use)
+- [Building effective agents (Anthropic)](https://www.anthropic.com/research/building-effective-agents)
 
 ---
 
-⬅️ **Anterior:** [Parte 04 — Embeddings, Vetores e RAG](./parte-04-embeddings-vetores-rag.md) | ➡️ **Próximo:** [Parte 06 — Ferramentas com IA](./parte-06-ferramentas-com-ia.md)
+⬅️ **Anterior:** [Parte 05](./parte-05-conhecimento-externo-rag.md) | ➡️ **Próximo:** [Parte 07](./parte-07-observabilidade-regressao.md)  
+🏠 **Início:** [README](../README.md)
