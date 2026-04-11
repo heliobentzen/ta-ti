@@ -1,7 +1,7 @@
-# Parte 03 — Prompt Engineering
+# Parte 03 — Engenharia de Contexto I
 
-> **Carga horária:** 3 horas  
-> **Prática correspondente:** [Prática 02](../praticas/pratica-02-prompt-engineering.md)
+> **Carga horária:** 4 horas  
+> **Prática correspondente:** [Prática 02](../praticas/pratica-02-engenharia-contexto.md)
 
 ---
 
@@ -209,7 +209,7 @@ def priorizar_contexto(documentos: list[str], pergunta: str, max_tokens: int = 3
     return contexto
 ```
 
-> **Dica:** Na Parte 04 (Embeddings e RAG), veremos como usar busca semântica para selecionar automaticamente os trechos mais relevantes de uma base de conhecimento — a forma mais eficaz de priorizar contexto.
+> **Dica:** Na Parte 05 (Conhecimento Externo e RAG), veremos como usar busca semântica para selecionar automaticamente os trechos mais relevantes de uma base de conhecimento — a forma mais eficaz de priorizar contexto.
 
 ---
 
@@ -485,4 +485,4 @@ def evaluate_prompt(prompt_template, test_cases, expected_outputs):
 
 ---
 
-⬅️ **Anterior:** [Parte 02](./parte-02-llms-como-funcionam.md) | ➡️ **Próximo:** [Parte 04](./parte-04-embeddings-vetores-rag.md)
+⬅️ **Anterior:** [Parte 02 — LLMs e Consumo de Contexto](./parte-02-llms-consumo-contexto.md) | ➡️ **Próximo:** [Parte 04 — Engenharia de Contexto II](./parte-04-engenharia-contexto-ii.md)

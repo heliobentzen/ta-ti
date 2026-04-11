@@ -1,11 +1,11 @@
-# Parte 05 — Agentes de IA
+# Parte 06 — Agentes no Sistema
 
 > **Carga horária:** 7 horas  
 > **Práticas correspondentes:** [Prática 04](../praticas/pratica-04-agente-simples.md) e [Prática 05](../praticas/pratica-05-agente-ferramentas.md)
 
 ---
 
-## 5.1 O que é um Agente de IA?
+## 6.1 O que é um Agente de IA?
 
 Um **agente de IA** é um sistema que usa um LLM como "cérebro" para:
 1. **Perceber** o ambiente (através de inputs)
@@ -28,7 +28,7 @@ Agente:  "Qual é o clima em Recife?"
 
 ---
 
-## 5.2 O Loop ReAct
+## 6.2 O Loop ReAct
 
 O padrão **ReAct (Reason + Act)** é a base de muitos agentes modernos:
 
@@ -48,7 +48,7 @@ Final Answer: Em Recife está 32°C e ensolarado. Você não precisará de guard
 
 ---
 
-## 5.3 Agente Simples com Function Calling
+## 6.3 Agente Simples com Function Calling
 
 ```python
 from openai import OpenAI
@@ -202,11 +202,11 @@ print(run_agent("Quanto é 15% de 2750?"))
 
 ---
 
-## 5.4 Function Calling em Detalhe
+## 6.4 Function Calling em Detalhe
 
 Function calling é o mecanismo que permite a um LLM **solicitar a execução de funções** no seu código. O modelo não executa nada diretamente — ele retorna um JSON estruturado indicando qual função quer chamar e com quais argumentos.
 
-### 5.4.1 Anatomia de uma Tool Definition
+### 6.4.1 Anatomia de uma Tool Definition
 
 Cada ferramenta é descrita por um **JSON Schema** que o modelo usa para entender quando e como chamá-la:
 
@@ -243,7 +243,7 @@ tool_definition = {
 
 > **💡 Dica:** A `description` da ferramenta é crucial — o modelo decide **quando** usar a ferramenta com base nela. Seja específico e inclua exemplos de quando usá-la.
 
-### 5.4.2 Fluxo Completo de uma Tool Call
+### 6.4.2 Fluxo Completo de uma Tool Call
 
 ```python
 import json
@@ -322,7 +322,7 @@ if msg.tool_calls:
     print(response_final.choices[0].message.content)
 ```
 
-### 5.4.3 Chamadas Paralelas de Ferramentas
+### 6.4.3 Chamadas Paralelas de Ferramentas
 
 O modelo pode solicitar **múltiplas ferramentas** em uma única resposta. Isso é útil quando várias informações independentes são necessárias:
 
@@ -419,7 +419,7 @@ if msg.tool_calls:
     print(final.choices[0].message.content)
 ```
 
-### 5.4.4 Function Calling com Ollama
+### 6.4.4 Function Calling com Ollama
 
 O Ollama suporta function calling nativamente via API compatível com OpenAI. Basta apontar o `base_url` para o servidor local:
 
@@ -493,7 +493,7 @@ if msg.tool_calls:
 
 ---
 
-## 5.5 Arquiteturas de Agentes
+## 6.5 Arquiteturas de Agentes
 
 ### Agente Único (Single Agent)
 
@@ -527,7 +527,7 @@ User ←
 
 ---
 
-## 5.6 Memória em Agentes
+## 6.6 Memória em Agentes
 
 Tipos de memória disponíveis:
 
@@ -562,11 +562,11 @@ class AgentWithMemory:
 
 ---
 
-## 5.7 Frameworks Open-Source para Agentes
+## 6.7 Frameworks Open-Source para Agentes
 
 Existem vários frameworks gratuitos e open-source para construir agentes. Abaixo, os mais relevantes para uso educacional.
 
-### 5.7.1 smolagents (Hugging Face) — Recomendado para Iniciantes
+### 6.7.1 smolagents (Hugging Face) — Recomendado para Iniciantes
 
 O [smolagents](https://github.com/huggingface/smolagents) é a biblioteca de agentes da Hugging Face. É **100% open-source**, simples e funciona com qualquer modelo (local ou API).
 
@@ -605,7 +605,7 @@ print(result)
 
 > **💡 Vantagem:** smolagents gera código Python para resolver tarefas (CodeAgent), o que é mais transparente e educativo do que tool calling via JSON.
 
-### 5.7.2 LangGraph — Agentes com Fluxo Controlado
+### 6.7.2 LangGraph — Agentes com Fluxo Controlado
 
 LangGraph modela agentes como grafos com nós (ações) e arestas (condições):
 
@@ -660,7 +660,7 @@ workflow.add_edge("tools", "agent")
 app = workflow.compile()
 ```
 
-### 5.7.3 LangChain — Ecossistema Completo
+### 6.7.3 LangChain — Ecossistema Completo
 
 LangChain oferece uma interface unificada para criar agentes com diversas ferramentas:
 
@@ -718,7 +718,7 @@ print(resultado["output"])
 
 ---
 
-## 5.8 Ferramentas Comuns para Agentes
+## 6.8 Ferramentas Comuns para Agentes
 
 | Ferramenta | Uso | Biblioteca | Gratuita? |
 |-----------|-----|-----------|-----------|
@@ -734,11 +734,11 @@ print(resultado["output"])
 
 ---
 
-## 5.9 Agentes Multi-Tool Avançados
+## 6.9 Agentes Multi-Tool Avançados
 
 Agentes reais costumam ter acesso a **várias ferramentas especializadas**. Nesta seção, construímos agentes mais sofisticados que combinam múltiplas capacidades.
 
-### 5.9.1 Agente com RAG como Ferramenta
+### 6.9.1 Agente com RAG como Ferramenta
 
 Em vez de usar RAG isoladamente, podemos integrá-lo como **uma ferramenta** de um agente. Assim, o agente decide quando consultar a base de conhecimento:
 
@@ -884,7 +884,7 @@ print(run_support_agent("Onde está meu pedido PED-001?"))
 print(run_support_agent("Quanto custa o frete para CEP 50000-000, pacote de 3kg?"))
 ```
 
-### 5.9.2 Agente de Pesquisa com Múltiplas Ferramentas
+### 6.9.2 Agente de Pesquisa com Múltiplas Ferramentas
 
 Um agente que busca informações, processa dados e gera relatórios:
 
@@ -1050,11 +1050,11 @@ print(run_research_agent(
 
 ---
 
-## 5.10 Debugging e Observabilidade de Agentes
+## 6.10 Debugging e Observabilidade de Agentes
 
 Agentes autônomos podem ser difíceis de depurar. Logging e rastreamento adequados são essenciais.
 
-### 5.10.1 Logging de Decisões e Tool Calls
+### 6.10.1 Logging de Decisões e Tool Calls
 
 ```python
 import logging
@@ -1164,7 +1164,7 @@ class ObservableAgent:
                 print(f"  [{ts}] {etype}: {json.dumps({k: v for k, v in entry.items() if k not in ('timestamp', 'type')}, ensure_ascii=False)[:100]}")
 ```
 
-### 5.10.2 Modos de Falha Comuns
+### 6.10.2 Modos de Falha Comuns
 
 | Problema | Sintoma | Solução |
 |----------|---------|---------|
@@ -1193,7 +1193,7 @@ def detect_loop(messages: list, window: int = 4) -> bool:
     return len(set(recent)) == 1
 ```
 
-### 5.10.3 Observabilidade com Langfuse
+### 6.10.3 Observabilidade com Langfuse
 
 O [Langfuse](https://langfuse.com/) é uma plataforma open-source para monitorar e depurar aplicações com LLMs. Ele registra traces, custos e latências automaticamente:
 
@@ -1229,11 +1229,11 @@ response = client.chat.completions.create(
 
 ---
 
-## 5.11 Padrões Práticos para Produção
+## 6.11 Padrões Práticos para Produção
 
 Ao colocar agentes em ambientes reais, precisamos de mecanismos de resiliência e controle de custos.
 
-### 5.11.1 Timeout e Retry
+### 6.11.1 Timeout e Retry
 
 ```python
 import time
@@ -1269,7 +1269,7 @@ def call_llm_with_retry(messages: list, tools: list = None,
                 raise RuntimeError(f"Falha após {max_retries} tentativas: {e}")
 ```
 
-### 5.11.2 Fallback entre Modelos
+### 6.11.2 Fallback entre Modelos
 
 ```python
 from openai import OpenAI
@@ -1304,7 +1304,7 @@ def call_with_fallback(messages: list, tools: list = None,
     raise RuntimeError("Todos os provedores falharam")
 ```
 
-### 5.11.3 Human-in-the-Loop
+### 6.11.3 Human-in-the-Loop
 
 Para operações sensíveis, o agente deve solicitar aprovação humana antes de executar:
 
@@ -1346,7 +1346,7 @@ class HumanInTheLoopAgent:
         return {"erro": f"Ferramenta '{tool_name}' não implementada"}
 ```
 
-### 5.11.4 Controle de Custos
+### 6.11.4 Controle de Custos
 
 ```python
 class CostAwareAgent:
@@ -1395,7 +1395,7 @@ class CostAwareAgent:
 
 ---
 
-## 5.12 Segurança em Agentes
+## 6.12 Segurança em Agentes
 
 Agentes com acesso a ferramentas reais precisam de guardrails:
 
@@ -1427,9 +1427,9 @@ class SafeAgent:
 
 ---
 
-## 5.13 Hooks, Skills e MCP
+## 6.13 Hooks, Skills e MCP
 
-### 5.13.1 Hooks — Ganchos de Ciclo de Vida
+### 6.13.1 Hooks — Ganchos de Ciclo de Vida
 
 **Hooks** são funções que são chamadas automaticamente em pontos específicos do ciclo de vida do agente: antes e depois de uma tool call, ao iniciar ou encerrar uma conversa, ao ocorrer um erro, etc. Eles permitem adicionar logging, validação, métricas e segurança sem modificar a lógica principal do agente.
 
@@ -1545,7 +1545,7 @@ print(converter_moeda(100, "USD", "BRL"))
 
 ---
 
-### 5.13.2 Skills — Habilidades Reutilizáveis
+### 6.13.2 Skills — Habilidades Reutilizáveis
 
 **Skills** (habilidades) são unidades de capacidade bem definidas, documentadas e reutilizáveis que podem ser compostas para formar agentes mais complexos. Diferente de ferramentas simples (funções isoladas), uma skill encapsula lógica, validação, contexto e pode até orquestrar múltiplas chamadas ao LLM.
 
@@ -1715,7 +1715,7 @@ print(agente_com_skills("Resuma esse texto em português e depois classifique o 
 
 ---
 
-### 5.13.3 MCP — Model Context Protocol
+### 6.13.3 MCP — Model Context Protocol
 
 **MCP (Model Context Protocol)** é um protocolo aberto criado pela Anthropic (novembro de 2024) que padroniza a comunicação entre modelos de linguagem e fontes externas de dados e ferramentas. Pense nele como um "USB-C para IA": um conector universal que permite a qualquer modelo acessar qualquer ferramenta ou dado através de uma interface padronizada.
 
@@ -1966,7 +1966,7 @@ pip install mcp
 
 ---
 
-## 📌 Resumo da Parte 05
+## 📌 Resumo da Parte 06
 
 | Conceito | Descrição |
 |----------|-----------|
@@ -2012,4 +2012,4 @@ pip install mcp
 
 ---
 
-⬅️ **Anterior:** [Parte 04 — Embeddings, Vetores e RAG](./parte-04-embeddings-vetores-rag.md) | ➡️ **Próximo:** [Parte 06 — Ferramentas com IA](./parte-06-ferramentas-com-ia.md)
+⬅️ **Anterior:** [Parte 05 — Conhecimento Externo e RAG](./parte-05-conhecimento-externo-rag.md) | ➡️ **Próximo:** [Parte 07 — Observabilidade e Regressão de Comportamento](./parte-07-observabilidade-regressao.md)

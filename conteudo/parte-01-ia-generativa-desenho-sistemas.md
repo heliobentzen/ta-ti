@@ -1,4 +1,4 @@
-# Parte 01 — Introdução à IA Generativa
+# Parte 01 — IA Generativa no Desenho de Sistemas
 
 > **Carga horária:** 2 horas  
 > **Prática correspondente:** [Prática 01](../praticas/pratica-01-primeiros-passos-llm.md)
@@ -184,5 +184,5 @@ Como construtor de ferramentas com IA, você tem responsabilidade sobre:
 
 ---
 
-➡️ **Próximo:** [Parte 02 — LLMs: Como Funcionam](./parte-02-llms-como-funcionam.md)
+➡️ **Próximo:** [Parte 02 — LLMs e Consumo de Contexto](./parte-02-llms-consumo-contexto.md)
 🏠 **Início:** [README](../README.md)

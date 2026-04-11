@@ -1,7 +1,7 @@
-# Prática 06 — Pipeline Completo e Projeto Final
+# Prática 06 — Observabilidade e Projeto Final
 
 > **Carga horária estimada:** 3 horas  
-> **Conteúdo relacionado:** [Parte 06](../conteudo/parte-06-ferramentas-com-ia.md)
+> **Conteúdo relacionado:** [Parte 07](../conteudo/parte-07-observabilidade-regressao.md)
 
 ---
 
@@ -670,16 +670,13 @@ def formatar_codigo(codigo: str, linguagem: str = "python") -> str:
 # ──────────────────────────────────────────────
 
 CONTEUDO_CURSO = {
-    "parte01": {"titulo": "Introdução à IA Generativa", "carga": "2h"},
-    "parte02": {"titulo": "LLMs: Como Funcionam", "carga": "3h"},
-    "parte03": {"titulo": "APIs de LLMs", "carga": "2h"},
-    "parte04": {"titulo": "Prompt Engineering", "carga": "2h"},
-    "parte05": {"titulo": "Embeddings", "carga": "3h"},
-    "parte06": {"titulo": "Bancos Vetoriais", "carga": "2h"},
-    "parte07": {"titulo": "RAG", "carga": "3h"},
-    "parte08": {"titulo": "Agentes de IA", "carga": "3h"},
-    "parte09": {"titulo": "Ferramentas com IA", "carga": "3h"},
-    "parte10": {"titulo": "Projeto Final", "carga": "3h"},
+    "parte01": {"titulo": "IA Generativa no Desenho de Sistemas", "carga": "2h"},
+    "parte02": {"titulo": "LLMs e Consumo de Contexto", "carga": "3h"},
+    "parte03": {"titulo": "Engenharia de Contexto I", "carga": "4h"},
+    "parte04": {"titulo": "Engenharia de Contexto II", "carga": "3h"},
+    "parte05": {"titulo": "Conhecimento Externo e RAG", "carga": "6h"},
+    "parte06": {"titulo": "Agentes no Sistema", "carga": "7h"},
+    "parte07": {"titulo": "Observabilidade e Regressão de Comportamento", "carga": "3h"},
 }
 
 def listar_partes_curso() -> list:

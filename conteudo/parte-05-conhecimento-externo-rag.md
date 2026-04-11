@@ -1,11 +1,11 @@
-# Parte 04 — Embeddings, Bancos Vetoriais e RAG
+# Parte 05 — Conhecimento Externo e RAG
 
-> **Carga horária:** 4 horas  
-> **Prática correspondente:** [Prática 03](../praticas/pratica-03-embeddings-vetores-rag.md)
+> **Carga horária:** 6 horas  
+> **Prática correspondente:** [Prática 03](../praticas/pratica-03-conhecimento-externo-rag.md)
 
 ---
 
-## 4.1 O que são Embeddings?
+## 5.1 O que são Embeddings?
 
 **Embeddings** são representações numéricas de dados (texto, imagens, áudio) na forma de vetores de alta dimensão. A ideia central é simples e poderosa:
 
@@ -26,7 +26,7 @@ Esse princípio — objetos similares têm vetores próximos — é a base de:
 
 ---
 
-## 4.2 Como Embeddings São Gerados?
+## 5.2 Como Embeddings São Gerados?
 
 Modelos de embedding são redes neurais treinadas para mapear texto para vetores. O treinamento tipicamente usa:
 
@@ -48,7 +48,7 @@ Extraem a representação do token `[CLS]` após o processamento completo do tex
 
 ---
 
-## 4.3 Dimensionalidade
+## 5.3 Dimensionalidade
 
 Modelos populares e suas dimensões:
 
@@ -66,7 +66,7 @@ Modelos populares e suas dimensões:
 
 ---
 
-## 4.4 Gerando Embeddings na Prática
+## 5.4 Gerando Embeddings na Prática
 
 ### Com a API da OpenAI
 
@@ -160,7 +160,7 @@ Para domínios específicos (jurídico, médico, técnico), você pode ajustar m
 
 ---
 
-## 4.5 Similaridade entre Vetores
+## 5.5 Similaridade entre Vetores
 
 ### Similaridade de Cosseno
 
@@ -248,7 +248,7 @@ for score, doc in results:
 
 ---
 
-## 4.6 Chunking de Documentos
+## 5.6 Chunking de Documentos
 
 Documentos longos precisam ser divididos em pedaços (chunks) antes de gerar embeddings:
 
@@ -325,7 +325,7 @@ chunks = splitter.chunks(document)
 
 ---
 
-## 4.7 Por que Bancos Vetoriais?
+## 5.7 Por que Bancos Vetoriais?
 
 Você já sabe gerar embeddings e calcular similaridade. Mas e quando você tem:
 - 1 milhão de documentos?
@@ -338,7 +338,7 @@ Fazer busca por força bruta (comparar a query com todos os vetores) fica inviá
 
 ---
 
-## 4.8 Busca Aproximada de Vizinhos (ANN)
+## 5.8 Busca Aproximada de Vizinhos (ANN)
 
 Em vez de busca exata (comparar com todos), os bancos vetoriais usam algoritmos de **busca aproximada (ANN - Approximate Nearest Neighbor)**:
 
@@ -361,7 +361,7 @@ Outros algoritmos com diferentes trade-offs entre velocidade, precisão e memór
 
 ---
 
-## 4.9 Principais Bancos Vetoriais
+## 5.9 Principais Bancos Vetoriais
 
 ### Comparativo
 
@@ -506,7 +506,7 @@ results = collection.query(
 
 ---
 
-## 4.10 ChromaDB — Início Rápido
+## 5.10 ChromaDB — Início Rápido
 
 ChromaDB é a escolha ideal para aprender e prototipar:
 
@@ -629,7 +629,7 @@ collection.upsert(
 
 ---
 
-## 4.11 O que é RAG?
+## 5.11 O que é RAG?
 
 **RAG (Retrieval Augmented Generation)** é uma arquitetura que combina:
 1. **Recuperação** de informações relevantes de uma base de conhecimento
@@ -651,7 +651,7 @@ Usuário → "Qual é a política de férias?"
 
 ---
 
-## 4.12 Arquitetura RAG
+## 5.12 Arquitetura RAG
 
 ```
 [Documentos] → [Chunking] → [Embedding] → [Banco Vetorial]
@@ -719,7 +719,7 @@ print(result)
 
 ---
 
-## 4.13 RAG Simples — Implementação do Zero
+## 5.13 RAG Simples — Implementação do Zero
 
 ```python
 from openai import OpenAI
@@ -832,7 +832,7 @@ print(rag_query("Qual é o salário?"))  # não está na base
 
 ---
 
-## 4.14 RAG Avançado — Técnicas de Melhoria
+## 5.14 RAG Avançado — Técnicas de Melhoria
 
 ### 1. Query Rewriting
 
@@ -969,7 +969,7 @@ def self_rag(question: str) -> str:
 
 ---
 
-## 4.15 Construindo um Chatbot RAG Completo
+## 5.15 Construindo um Chatbot RAG Completo
 
 ```python
 class RAGChatbot:
@@ -1020,7 +1020,7 @@ CONTEXTO RELEVANTE:
 
 ---
 
-## 📌 Resumo da Parte 04
+## 📌 Resumo da Parte 05
 
 | Conceito | Descrição |
 |----------|-----------|
@@ -1066,4 +1066,4 @@ CONTEXTO RELEVANTE:
 
 ---
 
-⬅️ **Anterior:** [Parte 03 — Prompt Engineering](./parte-03-prompt-engineering.md) | ➡️ **Próximo:** [Parte 05 — Agentes de IA](./parte-05-agentes-ia.md)
+⬅️ **Anterior:** [Parte 04 — Engenharia de Contexto II](./parte-04-engenharia-contexto-ii.md) | ➡️ **Próximo:** [Parte 06 — Agentes no Sistema](./parte-06-agentes-no-sistema.md)

@@ -3,7 +3,7 @@
 > **Disciplina:** Tópicos Avançados em TI  
 > **Instituição:** IFPE — Instituto Federal de Pernambuco  
 > **Professor:** Hélio Bentzen  
-> **Carga Horária:** 26 horas  
+> **Carga Horária:** 28 horas  
 
 ---
 
@@ -11,14 +11,13 @@
 
 Esta disciplina tem como objetivo capacitar programadores a **entender e construir soluções práticas com IA Generativa**, com foco no que é relevante para o mercado agora e nos próximos anos. Ao final do curso, o aluno será capaz de:
 
-- Entender a arquitetura básica de LLMs e executar modelos localmente via Ollama
-- Aplicar técnicas avançadas de prompting e formatar saídas estruturadas (JSON/Markdown)
-- Consumir APIs de IA via código e gerenciar estado/histórico de conversação
-- Implementar RAG como ferramenta de contexto dinâmico para agentes
-- Construir agentes autônomos com Function Calling, LangGraph e smolagents
-- Monitorar aplicações de IA com rastreabilidade, custos e telemetria (Langfuse)
-- Mitigar riscos como Prompt Injection em ambientes de produção
-- Integrar assistentes de codificação com IA (Claude Code e alternativas open-source) ao fluxo de desenvolvimento diário
+- Avaliar onde a IA generativa entra (e onde não entra) no desenho de um sistema
+- Entender a arquitetura de LLMs, tokens, janela de contexto e seus limites
+- Aplicar engenharia de contexto: system prompts, papéis, formatos de saída e decomposição de tarefas
+- Gerenciar memória, estado e políticas do que entra e sai do contexto
+- Implementar RAG com fontes externas, chunking, metadados e avaliação
+- Construir agentes com contratos de ferramentas, integração com APIs e orquestração
+- Monitorar aplicações de IA com observabilidade, traces, custos e regressão de comportamento
 
 > **📌 Nota:** Esta disciplina é projetada para uso educacional. Todas as ferramentas e frameworks utilizados possuem opções **gratuitas ou open-source**. Modelos locais via [Ollama](https://ollama.ai) são utilizados como alternativa sem custo às APIs comerciais.
 
@@ -26,35 +25,43 @@ Esta disciplina tem como objetivo capacitar programadores a **entender e constru
 
 ## 📋 Ementa
 
-**IA Generativa para Desenvolvimento de Software — 26h**
+**IA Generativa para Desenvolvimento de Software — 28h**
 
 | # | Módulo | Carga Horária |
 |---|--------|---------------|
-| 01 | **Fundamentos e Prompt Engineering** | 5h |
-| 02 | **Integração e Gerenciamento de Estado** | 4h |
-| 03 | **O Essencial de RAG e Contexto** | 3h |
-| 04 | **Orquestração e Agentes Autônomos** | **10h** |
-| 05 | **Produção, Observabilidade e Ferramental** | 4h |
-| **Total** | | **26h** |
+| 01 | **IA Generativa no Desenho de Sistemas** | 2h |
+| 02 | **LLMs e Consumo de Contexto** | 3h |
+| 03 | **Engenharia de Contexto I** | 4h |
+| 04 | **Engenharia de Contexto II** | 3h |
+| 05 | **Conhecimento Externo e RAG** | 6h |
+| 06 | **Agentes no Sistema** | 7h |
+| 07 | **Observabilidade e Regressão de Comportamento** | 3h |
+| **Total** | | **28h** |
 
 ### Detalhamento dos Módulos
 
-**Módulo 01 — Fundamentos e Prompt Engineering (5h)**
-Arquitetura básica de LLMs. Execução de modelos locais (Ollama). Técnicas avançadas de prompting. Output parsing (formatação de saída em JSON/Markdown) e limites de contexto.
+**Módulo 01 — IA Generativa no Desenho de Sistemas (2h)**
+Fronteiras do produto, requisitos não funcionais (custo, latência, risco), onde o modelo entra e onde não entra.
 
-**Módulo 02 — Integração e Gerenciamento de Estado (4h)**
-Consumo de APIs de IA via código. Resolução da natureza stateless das LLMs e injeção de memória/histórico de conversação.
+**Módulo 02 — LLMs e Consumo de Contexto (3h)**
+Tokens, janela de contexto, implicações para arquitetura e limites do modelo.
 
-**Módulo 03 — O Essencial de RAG e Contexto (3h)**
-Conceitos básicos de Embeddings e busca semântica. O RAG estruturado exclusivamente como uma ferramenta de consulta (Tool) para municiar a IA com contexto dinâmico.
+**Módulo 03 — Engenharia de Contexto I (4h)**
+Instruções de sistema, papéis, formato de saída, decomposição em etapas; especificação testável.
 
-**Módulo 04 — Orquestração e Agentes Autônomos (10h)**
-Implementação de Function Calling para integração com sistemas externos. Construção de agentes autônomos e fluxos de raciocínio com LangGraph e smolagents (consumindo o RAG e outras APIs).
+**Módulo 04 — Engenharia de Contexto II (3h)**
+Memória, estado, políticas do que entra e sai do contexto.
 
-**Módulo 05 — Produção, Observabilidade e Ferramental (4h)**
-Monitoramento de telemetria, custos e rastreabilidade (Langfuse). Mitigação de riscos (Prompt Injection). Integração de assistentes de codificação (Claude Code, soluções open-source) ao fluxo de desenvolvimento diário.
+**Módulo 05 — Conhecimento Externo e RAG (6h)**
+Fontes, modelagem da informação, chunking, metadados, atualização; avaliação básica.
 
-> **📌 Foco prático:** A maior carga horária está no Módulo 04, que cobre o tema mais relevante e aplicado do mercado atual: agentes autônomos.
+**Módulo 06 — Agentes no Sistema (7h)**
+Contratos de ferramentas, integração com APIs e legados, orquestração, falhas e loops; eixo principal + panorama do ecossistema.
+
+**Módulo 07 — Observabilidade e Regressão de Comportamento (3h)**
+Traces, custos, experimentos; degradação quando contexto ou dados mudam.
+
+> **📌 Foco prático:** A maior carga horária está no Módulo 06 (Agentes), que cobre o tema mais relevante e aplicado do mercado atual, seguido do Módulo 05 (RAG), que fornece a base de conhecimento externo para os agentes.
 
 ---
 
@@ -65,20 +72,21 @@ ta-ti/
 ├── README.md                  ← Você está aqui
 │
 ├── conteudo/                  ← Material teórico da disciplina
-│   ├── parte-01-introducao-ia-generativa.md
-│   ├── parte-02-llms-como-funcionam.md
-│   ├── parte-03-prompt-engineering.md
-│   ├── parte-04-embeddings-vetores-rag.md
-│   ├── parte-05-agentes-ia.md
-│   └── parte-06-ferramentas-com-ia.md
+│   ├── parte-01-ia-generativa-desenho-sistemas.md
+│   ├── parte-02-llms-consumo-contexto.md
+│   ├── parte-03-engenharia-contexto-i.md
+│   ├── parte-04-engenharia-contexto-ii.md
+│   ├── parte-05-conhecimento-externo-rag.md
+│   ├── parte-06-agentes-no-sistema.md
+│   └── parte-07-observabilidade-regressao.md
 │
 └── praticas/                  ← Atividades práticas evolutivas
     ├── pratica-01-primeiros-passos-llm.md
-    ├── pratica-02-prompt-engineering.md
-    ├── pratica-03-embeddings-vetores-rag.md
+    ├── pratica-02-engenharia-contexto.md
+    ├── pratica-03-conhecimento-externo-rag.md
     ├── pratica-04-agente-simples.md
     ├── pratica-05-agente-ferramentas.md
-    └── pratica-06-pipeline-projeto-final.md
+    └── pratica-06-observabilidade-projeto-final.md
 ```
 
 ---
@@ -143,16 +151,21 @@ Acesse a pasta [`praticas/`](./praticas/) para as atividades práticas evolutiva
 ## 🗺️ Trilha de Aprendizado
 
 ```
-[01 Fundamentos + Prompts] → [02 APIs + Estado]
-                                      ↓
-                              [03 RAG como Contexto]
-                                      ↓
-                         [04 Agentes Autônomos ★★★]
-                                      ↓
-                         [05 Produção + Ferramental]
+[01 IA no Desenho de Sistemas] → [02 LLMs e Contexto]
+                                          ↓
+                              [03 Engenharia de Contexto I]
+                                          ↓
+                              [04 Engenharia de Contexto II]
+                                          ↓
+                              [05 Conhecimento Externo e RAG ★★]
+                                          ↓
+                              [06 Agentes no Sistema ★★★]
+                                          ↓
+                              [07 Observabilidade e Regressão]
 ```
 
-> **★★★ Módulo com maior carga horária (10h)** — foco total em agentes autônomos, o diferencial do profissional de IA hoje.
+> **★★★ Módulo com maior carga horária (7h)** — foco em agentes no sistema, o diferencial do profissional de IA hoje.
+> **★★ Segundo maior módulo (6h)** — RAG é a base de conhecimento que alimenta os agentes.
 
 **Cada módulo teórico é seguido de práticas correspondentes** para fixação e aplicação imediata do conteúdo.
 

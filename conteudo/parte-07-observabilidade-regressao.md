@@ -1,11 +1,11 @@
-# Parte 06 — Construindo Ferramentas com IA
+# Parte 07 — Observabilidade e Regressão de Comportamento
 
-> **Carga horária:** 7 horas  
-> **Prática correspondente:** [Prática 06](../praticas/pratica-06-pipeline-projeto-final.md)
+> **Carga horária:** 3 horas  
+> **Prática correspondente:** [Prática 06](../praticas/pratica-06-observabilidade-projeto-final.md)
 
 ---
 
-## 6.1 Da IA para o Produto
+## 7.1 Da IA para o Produto
 
 Você já sabe os componentes individuais. Esta parte foca em **juntar tudo** para construir ferramentas reais e úteis.
 
@@ -22,7 +22,7 @@ Você já sabe os componentes individuais. Esta parte foca em **juntar tudo** pa
 
 ---
 
-## 6.2 Padrões de Arquitetura
+## 7.2 Padrões de Arquitetura
 
 ### Padrão 1 — LLM como Núcleo
 
@@ -114,7 +114,7 @@ Este é o padrão mais completo, combinando RAG, agentes, ferramentas e memória
 
 ---
 
-## 6.3 Construindo uma API com FastAPI
+## 7.3 Construindo uma API com FastAPI
 
 ```bash
 pip install fastapi uvicorn python-multipart
@@ -170,7 +170,7 @@ async def health():
 
 ---
 
-## 6.4 Interface Web com Streamlit
+## 7.4 Interface Web com Streamlit
 
 ```bash
 pip install streamlit
@@ -221,7 +221,7 @@ if prompt := st.chat_input("Digite sua mensagem..."):
 
 ---
 
-## 6.5 Processamento em Lote
+## 7.5 Processamento em Lote
 
 Para processar grandes volumes de dados:
 
@@ -258,7 +258,7 @@ results = asyncio.run(batch_process(texts))
 
 ---
 
-## 6.6 Cache e Otimização
+## 7.6 Cache e Otimização
 
 ```python
 import hashlib
@@ -296,9 +296,9 @@ class CachedLLM:
 
 ---
 
-## 6.7 Observabilidade com Langfuse
+## 7.7 Observabilidade com Langfuse
 
-### 6.7.1 Langfuse — Observabilidade Open-Source para LLMs
+### 7.7.1 Langfuse — Observabilidade Open-Source para LLMs
 
 [Langfuse](https://langfuse.com) é uma plataforma **open-source** de observabilidade para aplicações com LLM. Permite rastrear chamadas, medir latência, custos e qualidade das respostas. Pode ser self-hosted (gratuito) ou usar o cloud (com tier gratuito generoso).
 
@@ -352,7 +352,7 @@ langfuse.flush()
 
 > **🎓 Self-hosted gratuito:** Para uso educacional, Langfuse pode ser executado localmente via Docker: `docker compose up` a partir do repositório oficial.
 
-### 6.7.2 Observabilidade Manual (Sem Dependências Externas)
+### 7.7.2 Observabilidade Manual (Sem Dependências Externas)
 
 Para uma solução mais simples, sem dependências adicionais:
 
@@ -421,7 +421,7 @@ class ObservableLLM:
 
 ---
 
-## 6.8 Testes para Aplicações com IA
+## 7.8 Testes para Aplicações com IA
 
 ```python
 import pytest
@@ -455,7 +455,7 @@ def test_rag_pipeline_integration():
 
 ---
 
-## 6.9 Ferramentas de Coding com IA (Aider, Continue.dev)
+## 7.9 Ferramentas de Coding com IA (Aider, Continue.dev)
 
 Para programadores, existem ferramentas gratuitas e open-source que usam LLMs para auxiliar no desenvolvimento de código. Aqui listamos as principais opções que podem ser usadas em contexto educacional, sem custo.
 
@@ -514,7 +514,7 @@ aider --model ollama/llama3.2
 
 ---
 
-## 6.10 Deployment
+## 7.10 Deployment
 
 ### Docker
 
@@ -552,7 +552,7 @@ settings = Settings()
 
 ---
 
-## 6.11 Projeto Final — Assistente Inteligente Completo
+## 7.11 Projeto Final — Assistente Inteligente Completo
 
 O projeto final integra **todos os conceitos** em um **Assistente Inteligente** completo.
 
@@ -805,7 +805,7 @@ Quando não souber algo, admita e sugira onde buscar."""
 
 ---
 
-## 6.12 Critérios de Avaliação
+## 7.12 Critérios de Avaliação
 
 | Critério | Peso | Descrição |
 |---------|------|-----------|
@@ -818,7 +818,7 @@ Quando não souber algo, admita e sugira onde buscar."""
 
 ---
 
-## 6.13 Tendências e Próximos Passos
+## 7.13 Tendências e Próximos Passos
 
 ### O que está acontecendo agora (2024-2025)
 
@@ -874,7 +874,7 @@ PRÓXIMO NÍVEL:
 
 ---
 
-## 6.14 Recursos para Continuar Aprendendo
+## 7.14 Recursos para Continuar Aprendendo
 
 ### Cursos e Plataformas
 
@@ -901,7 +901,7 @@ PRÓXIMO NÍVEL:
 
 ---
 
-## 📌 Resumo da Parte 06
+## 📌 Resumo da Parte 07
 
 | Conceito | Descrição |
 |----------|-----------|
@@ -969,6 +969,6 @@ PRÓXIMO NÍVEL:
 
 ---
 
-⬅️ **Anterior:** [Parte 05 — Agentes de IA](./parte-05-agentes-ia.md)  
+⬅️ **Anterior:** [Parte 06 — Agentes no Sistema](./parte-06-agentes-no-sistema.md)  
 🏠 **Início:** [README](../README.md)  
-🛠️ **Prática:** [Prática 06 — Pipeline e Projeto Final](../praticas/pratica-06-pipeline-projeto-final.md)
+🛠️ **Prática:** [Prática 06 — Observabilidade e Projeto Final](../praticas/pratica-06-observabilidade-projeto-final.md)
