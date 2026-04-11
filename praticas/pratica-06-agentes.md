@@ -1,7 +1,7 @@
-# Prática 04 — Criando um Agente Simples
+# Prática 06 — Agentes no Sistema
 
 > **Carga horária estimada:** 3 horas  
-> **Conteúdo relacionado:** [Parte 05](../conteudo/parte-05-agentes-ia.md)
+> **Conteúdo relacionado:** [Parte 06](../conteudo/parte-06-agentes-no-sistema.md)
 
 ---
 
@@ -649,4 +649,4 @@ for p in perguntas:
 
 ---
 
-⬅️ **Anterior:** [Prática 03](./pratica-03-embeddings-vetores-rag.md) | ➡️ **Próxima:** [Prática 05 — Agente com Ferramentas](./pratica-05-agente-ferramentas.md)
+⬅️ **Anterior:** [Prática 05](./pratica-05-rag.md) | ➡️ **Próxima:** [Prática 07 — Observabilidade](./pratica-07-observabilidade.md)

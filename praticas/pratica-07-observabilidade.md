@@ -1,7 +1,7 @@
-# Prática 06 — Pipeline Completo e Projeto Final
+# Prática 07 — Observabilidade e Regressão de Comportamento
 
-> **Carga horária estimada:** 3 horas  
-> **Conteúdo relacionado:** [Parte 06](../conteudo/parte-06-ferramentas-com-ia.md)
+> **Carga horária estimada:** 2 horas  
+> **Conteúdo relacionado:** [Parte 07](../conteudo/parte-07-observabilidade-regressao.md)
 
 ---
 
@@ -1058,11 +1058,11 @@ python -m pratica06.interface.cli
 
 ## 🎉 Parabéns!
 
-Se você chegou até aqui, completou a jornada de 26 horas sobre IA Generativa para Programadores. Você agora tem as ferramentas para construir aplicações poderosas com IA!
+Se você chegou até aqui, completou a jornada de 27 horas sobre IA Generativa para Programadores. Você agora tem as ferramentas para construir aplicações poderosas com IA!
 
 > *"A melhor forma de entender IA é construindo com ela."* — Prof. Hélio Bentzen
 
 ---
 
-⬅️ **Anterior:** [Prática 05](./pratica-05-agente-ferramentas.md)  
+⬅️ **Anterior:** [Prática 06](./pratica-06-agentes.md)  
 🏠 **Início:** [README Principal](../README.md)

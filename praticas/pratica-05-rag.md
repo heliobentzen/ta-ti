@@ -1,7 +1,7 @@
-# Prática 03 — Embeddings, Bancos Vetoriais e RAG
+# Prática 05 — Conhecimento Externo e RAG
 
 > **Carga horária estimada:** 3 horas  
-> **Conteúdo relacionado:** [Parte 04](../conteudo/parte-04-embeddings-vetores-rag.md)
+> **Conteúdo relacionado:** [Parte 05](../conteudo/parte-05-conhecimento-externo-rag.md)
 
 ---
 
@@ -720,4 +720,4 @@ for q in queries:
 
 ---
 
-⬅️ **Anterior:** [Prática 02](./pratica-02-prompt-engineering.md) | ➡️ **Próxima:** [Prática 04 — Agente Simples](./pratica-04-agente-simples.md)
+⬅️ **Anterior:** [Prática 04](./pratica-04-engenharia-de-contexto-2.md) | ➡️ **Próxima:** [Prática 06 — Agentes no Sistema](./pratica-06-agentes.md)
