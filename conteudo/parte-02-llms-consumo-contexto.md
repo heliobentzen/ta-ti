@@ -169,6 +169,8 @@ O número máximo de tokens que o modelo processa de uma vez. É determinado dur
 - Tokens de entrada (prompt) + tokens de saída (resposta) devem caber na janela
 - Quanto maior a janela, maior o custo de computação (quadrático na atenção)
 
+![Diagrama da Janela de Contexto](../assets/janela-de-contexto.svg)
+
 ### KV Cache
 
 Durante a geração, as matrizes Key e Value dos tokens já processados são cacheadas para evitar recomputação. Isso acelera significativamente a geração, mas consome memória proporcional ao contexto.

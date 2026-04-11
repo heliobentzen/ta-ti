@@ -62,6 +62,8 @@ Restrições: Não use jargões técnicos. Não prometa resultados garantidos.
 
 A **janela de contexto** (context window) é o número máximo de tokens que um LLM consegue processar em uma única interação — isso inclui tanto o prompt de entrada quanto a resposta gerada. Pense nela como a "memória de trabalho" do modelo: tudo o que ele pode "ver" ao mesmo tempo.
 
+![Diagrama da Janela de Contexto](../assets/janela-de-contexto.svg)
+
 Entender a janela de contexto é essencial para prompt engineering porque:
 
 - **Prompts longos demais** são truncados ou rejeitados pela API
