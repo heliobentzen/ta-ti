@@ -1,7 +1,7 @@
-# Prática 02 — Prompt Engineering na Prática
+# Prática 02 — Engenharia de Contexto na Prática
 
 > **Carga horária estimada:** 2 horas  
-> **Conteúdo relacionado:** [Parte 03](../conteudo/parte-03-prompt-engineering.md)
+> **Conteúdo relacionado:** [Parte 03](../conteudo/parte-03-engenharia-contexto-i.md) e [Parte 04](../conteudo/parte-04-engenharia-contexto-ii.md)
 
 ---
 
@@ -319,4 +319,4 @@ for p in ["critica", "alta", "media", "baixa"]:
 
 ---
 
-⬅️ **Anterior:** [Prática 01](./pratica-01-primeiros-passos-llm.md) | ➡️ **Próxima:** [Prática 03 — Embeddings, Vetores e RAG](./pratica-03-embeddings-vetores-rag.md)
+⬅️ **Anterior:** [Prática 01](./pratica-01-primeiros-passos-llm.md) | ➡️ **Próxima:** [Prática 03 — Conhecimento Externo e RAG](./pratica-03-conhecimento-externo-rag.md)

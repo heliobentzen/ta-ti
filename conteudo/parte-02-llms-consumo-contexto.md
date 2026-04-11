@@ -1,4 +1,4 @@
-# Parte 02 — LLMs: Como Funcionam os Grandes Modelos de Linguagem
+# Parte 02 — LLMs e Consumo de Contexto
 
 > **Carga horária:** 3 horas  
 > **Prática correspondente:** [Prática 01](../praticas/pratica-01-primeiros-passos-llm.md)
@@ -486,4 +486,4 @@ Um LLM faz **exatamente isso**, mas de forma matemática: calcula uma distribui�
 
 ---
 
-⬅️ **Anterior:** [Parte 01](./parte-01-introducao-ia-generativa.md) | ➡️ **Próximo:** [Parte 03 — Prompt Engineering](./parte-03-prompt-engineering.md)
+⬅️ **Anterior:** [Parte 01 — IA Generativa no Desenho de Sistemas](./parte-01-ia-generativa-desenho-sistemas.md) | ➡️ **Próximo:** [Parte 03 — Engenharia de Contexto I](./parte-03-engenharia-contexto-i.md)

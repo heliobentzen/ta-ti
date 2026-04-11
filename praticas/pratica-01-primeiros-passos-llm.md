@@ -1,7 +1,7 @@
 # Prática 01 — Primeiros Passos com APIs de LLMs
 
 > **Carga horária estimada:** 2 horas  
-> **Conteúdo relacionado:** [Parte 01](../conteudo/parte-01-introducao-ia-generativa.md) e [Parte 02](../conteudo/parte-02-llms-como-funcionam.md)
+> **Conteúdo relacionado:** [Parte 01](../conteudo/parte-01-ia-generativa-desenho-sistemas.md) e [Parte 02](../conteudo/parte-02-llms-consumo-contexto.md)
 
 ---
 
@@ -298,4 +298,4 @@ python pratica01/chatbot.py
 
 ---
 
-➡️ **Próxima prática:** [Prática 02 — Prompt Engineering](./pratica-02-prompt-engineering.md)
+➡️ **Próxima prática:** [Prática 02 — Engenharia de Contexto](./pratica-02-engenharia-contexto.md)
