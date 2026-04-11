@@ -1,7 +1,7 @@
 # Parte 02 — LLMs e Consumo de Contexto
 
 > **Carga horária:** 3h  
-> **Prática correspondente:** [Prática 02](../praticas/pratica-02-prompt-engineering.md)
+> **Prática correspondente:** [Prática 02](../praticas/pratica-02-llms-e-contexto.md)
 
 ---
 

@@ -1,7 +1,7 @@
 # Parte 01 — IA Generativa no Desenho de Sistemas
 
 > **Carga horária:** 2h  
-> **Prática correspondente:** [Prática 01](../praticas/pratica-01-primeiros-passos-llm.md)
+> **Prática correspondente:** [Prática 01](../praticas/pratica-01-desenho-de-sistemas.md)
 
 ---
 
