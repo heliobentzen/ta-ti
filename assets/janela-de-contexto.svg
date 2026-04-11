@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 560" width="720" height="560" font-family="Arial, Helvetica, sans-serif">
+
+  <!-- Background -->
+  <rect width="720" height="560" fill="#f8f9fa" rx="10"/>
+
+  <!-- ── Title ── -->
+  <text x="360" y="38" text-anchor="middle" font-size="19" font-weight="bold" fill="#212529">Janela de Contexto — O que o LLM "vê"</text>
+  <text x="360" y="58" text-anchor="middle" font-size="12" fill="#6c757d">Tudo que é enviado em uma única chamada à API</text>
+
+  <!-- ── Outer border (context window) ── -->
+  <rect x="30" y="70" width="660" height="420" fill="white" stroke="#495057" stroke-width="2.5" rx="10"/>
+
+  <!-- ── SECTION 1: System Prompt ── -->
+  <rect x="45" y="84" width="630" height="72" fill="#cfe2ff" stroke="#0d6efd" stroke-width="1.5" rx="6"/>
+  <!-- icon-like bullet -->
+  <circle cx="66" cy="120" r="12" fill="#0d6efd"/>
+  <text x="66" y="125" text-anchor="middle" font-size="13" fill="white" font-weight="bold">S</text>
+  <text x="88" y="112" font-size="13" font-weight="bold" fill="#0a3981">System Prompt</text>
+  <text x="88" y="130" font-size="11" fill="#0a3981">Persona, regras de comportamento, instruções permanentes do sistema.</text>
+  <text x="88" y="147" font-size="11" fill="#0a3981" font-style="italic">Ex: "Você é um assistente técnico especializado em Python…"</text>
+
+  <!-- ── SECTION 2: Conversation History ── -->
+  <rect x="45" y="168" width="630" height="118" fill="#fde8e8" stroke="#dc3545" stroke-width="1.5" rx="6"/>
+  <circle cx="66" cy="197" r="12" fill="#dc3545"/>
+  <text x="66" y="202" text-anchor="middle" font-size="13" fill="white" font-weight="bold">H</text>
+  <text x="88" y="192" font-size="13" font-weight="bold" fill="#842029">Histórico de Conversa</text>
+  <text x="88" y="208" font-size="11" fill="#842029">Mensagens anteriores (user + assistant) que o modelo precisa lembrar.</text>
+
+  <!-- history rows -->
+  <rect x="60" y="218" width="600" height="18" fill="#f5c2c7" rx="3" opacity="0.7"/>
+  <text x="72" y="231" font-size="10" fill="#6d1010" opacity="0.9">👤 Usuário: "Explique o que são tokens." (mensagem mais antiga — pode ser truncada quando o contexto encher)</text>
+
+  <rect x="60" y="240" width="600" height="18" fill="#f5c2c7" rx="3"/>
+  <text x="72" y="253" font-size="10" fill="#6d1010">🤖 Assistente: "Tokens são pedaços de texto… (resposta anterior do modelo)"</text>
+
+  <rect x="60" y="262" width="600" height="18" fill="#f5c2c7" rx="3"/>
+  <text x="72" y="275" font-size="10" fill="#6d1010">👤 Usuário: "E a janela de contexto?"  (mensagem mais recente do histórico)</text>
+
+  <!-- ── SECTION 3: RAG / External Docs ── -->
+  <rect x="45" y="298" width="630" height="66" fill="#d1e7dd" stroke="#198754" stroke-width="1.5" rx="6" stroke-dasharray="6,3"/>
+  <circle cx="66" cy="328" r="12" fill="#198754"/>
+  <text x="66" y="333" text-anchor="middle" font-size="11" fill="white" font-weight="bold">R</text>
+  <text x="88" y="322" font-size="13" font-weight="bold" fill="#0a3622">Documentos Recuperados — RAG  <tspan font-size="11" font-style="italic" fill="#198754">(opcional)</tspan></text>
+  <text x="88" y="338" font-size="11" fill="#0a3622">Trechos buscados de uma base de conhecimento externa e injetados no contexto.</text>
+  <text x="88" y="355" font-size="11" fill="#0a3622" font-style="italic">Ex: "Trecho do manual: … A configuração padrão é X…"</text>
+
+  <!-- ── SECTION 4: Current Message ── -->
+  <rect x="45" y="376" width="630" height="50" fill="#fff3cd" stroke="#ffc107" stroke-width="1.5" rx="6"/>
+  <circle cx="66" cy="401" r="12" fill="#ffc107"/>
+  <text x="66" y="406" text-anchor="middle" font-size="13" fill="#664d03" font-weight="bold">✉</text>
+  <text x="88" y="396" font-size="13" font-weight="bold" fill="#664d03">Mensagem Atual do Usuário</text>
+  <text x="88" y="415" font-size="11" fill="#664d03">O que o usuário está enviando agora — a pergunta ou instrução da vez.</text>
+
+  <!-- ── Response area (dotted) ── -->
+  <rect x="45" y="438" width="630" height="40" fill="#f8f9fa" stroke="#adb5bd" stroke-width="1.5" stroke-dasharray="7,4" rx="6"/>
+  <text x="360" y="463" text-anchor="middle" font-size="11" fill="#6c757d">⬇  Resposta gerada pelo modelo  (também consome tokens da janela)</text>
+
+  <!-- ── Token usage bar ── -->
+  <text x="30" y="511" font-size="12" fill="#495057" font-weight="bold">Tokens usados:</text>
+  <!-- bar background -->
+  <rect x="150" y="497" width="510" height="20" fill="#dee2e6" rx="5" stroke="#ced4da" stroke-width="1"/>
+  <!-- system prompt -->
+  <rect x="150" y="497" width="80" height="20" fill="#0d6efd" rx="5"/>
+  <!-- history -->
+  <rect x="230" y="497" width="195" height="20" fill="#dc3545"/>
+  <!-- rag -->
+  <rect x="425" y="497" width="105" height="20" fill="#198754"/>
+  <!-- current msg -->
+  <rect x="530" y="497" width="55" height="20" fill="#ffc107"/>
+  <!-- remaining (rounded right end) -->
+  <rect x="585" y="497" width="75" height="20" fill="#dee2e6" rx="5"/>
+  <!-- Right-side cap so the colored bar doesn't have mismatched right corners -->
+  <rect x="150" y="497" width="435" height="20" fill="none" rx="0"/>
+
+  <!-- bar labels -->
+  <text x="190" y="509" text-anchor="middle" font-size="9" fill="white" font-weight="bold">System</text>
+  <text x="327" y="509" text-anchor="middle" font-size="9" fill="white" font-weight="bold">Histórico</text>
+  <text x="477" y="509" text-anchor="middle" font-size="9" fill="white" font-weight="bold">RAG</text>
+  <text x="557" y="509" text-anchor="middle" font-size="9" fill="#664d03" font-weight="bold">Msg</text>
+  <text x="623" y="509" text-anchor="middle" font-size="9" fill="#495057">livre</text>
+
+  <!-- percentage label -->
+  <text x="670" y="511" font-size="11" fill="#495057">~85%</text>
+
+  <!-- ── Footer caption ── -->
+  <text x="360" y="545" text-anchor="middle" font-size="11" fill="#6c757d" font-style="italic">O modelo é stateless: cada chamada recebe todo o contexto do zero. Gerenciar o que entra é responsabilidade do desenvolvedor.</text>
+
+</svg>
