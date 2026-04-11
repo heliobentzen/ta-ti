@@ -29,36 +29,36 @@ Esta disciplina tem como objetivo capacitar programadores a **entender e constru
 
 | # | Módulo | Carga Horária |
 |---|--------|---------------|
-| 01 | **IA Generativa no Desenho de Sistemas** | 2h |
-| 02 | **LLMs e Consumo de Contexto** | 3h |
-| 03 | **Engenharia de Contexto I** | 4h |
-| 04 | **Engenharia de Contexto II** | 3h |
-| 05 | **Conhecimento Externo e RAG** | 6h |
-| 06 | **Agentes no Sistema** | 7h |
-| 07 | **Observabilidade e Regressão de Comportamento** | 3h |
+| 01 | [**IA Generativa no Desenho de Sistemas**](./conteudo/parte-01-ia-generativa-desenho-sistemas.md) | 2h |
+| 02 | [**LLMs e Consumo de Contexto**](./conteudo/parte-02-llms-consumo-contexto.md) | 3h |
+| 03 | [**Engenharia de Contexto I**](./conteudo/parte-03-engenharia-contexto-i.md) | 4h |
+| 04 | [**Engenharia de Contexto II**](./conteudo/parte-04-engenharia-contexto-ii.md) | 3h |
+| 05 | [**Conhecimento Externo e RAG**](./conteudo/parte-05-conhecimento-externo-rag.md) | 6h |
+| 06 | [**Agentes no Sistema**](./conteudo/parte-06-agentes-no-sistema.md) | 7h |
+| 07 | [**Observabilidade e Regressão de Comportamento**](./conteudo/parte-07-observabilidade-regressao.md) | 3h |
 | **Total** | | **28h** |
 
 ### Detalhamento dos Módulos
 
-**Módulo 01 — IA Generativa no Desenho de Sistemas (2h)**
+**[Módulo 01 — IA Generativa no Desenho de Sistemas](./conteudo/parte-01-ia-generativa-desenho-sistemas.md) (2h)**
 Fronteiras do produto, requisitos não funcionais (custo, latência, risco), onde o modelo entra e onde não entra.
 
-**Módulo 02 — LLMs e Consumo de Contexto (3h)**
+**[Módulo 02 — LLMs e Consumo de Contexto](./conteudo/parte-02-llms-consumo-contexto.md) (3h)**
 Tokens, janela de contexto, implicações para arquitetura e limites do modelo.
 
-**Módulo 03 — Engenharia de Contexto I (4h)**
+**[Módulo 03 — Engenharia de Contexto I](./conteudo/parte-03-engenharia-contexto-i.md) (4h)**
 Instruções de sistema, papéis, formato de saída, decomposição em etapas; especificação testável.
 
-**Módulo 04 — Engenharia de Contexto II (3h)**
+**[Módulo 04 — Engenharia de Contexto II](./conteudo/parte-04-engenharia-contexto-ii.md) (3h)**
 Memória, estado, políticas do que entra e sai do contexto.
 
-**Módulo 05 — Conhecimento Externo e RAG (6h)**
+**[Módulo 05 — Conhecimento Externo e RAG](./conteudo/parte-05-conhecimento-externo-rag.md) (6h)**
 Fontes, modelagem da informação, chunking, metadados, atualização; avaliação básica.
 
-**Módulo 06 — Agentes no Sistema (7h)**
+**[Módulo 06 — Agentes no Sistema](./conteudo/parte-06-agentes-no-sistema.md) (7h)**
 Contratos de ferramentas, integração com APIs e legados, orquestração, falhas e loops; eixo principal + panorama do ecossistema.
 
-**Módulo 07 — Observabilidade e Regressão de Comportamento (3h)**
+**[Módulo 07 — Observabilidade e Regressão de Comportamento](./conteudo/parte-07-observabilidade-regressao.md) (3h)**
 Traces, custos, experimentos; degradação quando contexto ou dados mudam.
 
 > **📌 Foco prático:** A maior carga horária está no Módulo 06 (Agentes), que cobre o tema mais relevante e aplicado do mercado atual, seguido do Módulo 05 (RAG), que fornece a base de conhecimento externo para os agentes.
@@ -140,11 +140,26 @@ OLLAMA_HOST=http://localhost:11434
 
 ## 📚 Conteúdo
 
-Acesse a pasta [`conteudo/`](./conteudo/) para o material teórico completo, cobrindo todos os módulos da ementa de forma progressiva.
+Material teórico completo, cobrindo todos os módulos da ementa de forma progressiva:
+
+1. [Parte 01 — IA Generativa no Desenho de Sistemas](./conteudo/parte-01-ia-generativa-desenho-sistemas.md)
+2. [Parte 02 — LLMs e Consumo de Contexto](./conteudo/parte-02-llms-consumo-contexto.md)
+3. [Parte 03 — Engenharia de Contexto I](./conteudo/parte-03-engenharia-contexto-i.md)
+4. [Parte 04 — Engenharia de Contexto II](./conteudo/parte-04-engenharia-contexto-ii.md)
+5. [Parte 05 — Conhecimento Externo e RAG](./conteudo/parte-05-conhecimento-externo-rag.md)
+6. [Parte 06 — Agentes no Sistema](./conteudo/parte-06-agentes-no-sistema.md)
+7. [Parte 07 — Observabilidade e Regressão de Comportamento](./conteudo/parte-07-observabilidade-regressao.md)
 
 ## 🛠️ Práticas
 
-Acesse a pasta [`praticas/`](./praticas/) para as atividades práticas evolutivas, que vão de uma simples chamada à API até a construção de agentes autônomos completos.
+Atividades práticas evolutivas, que vão de uma simples chamada à API até a construção de agentes autônomos completos:
+
+1. [Prática 01 — Primeiros Passos com LLM](./praticas/pratica-01-primeiros-passos-llm.md)
+2. [Prática 02 — Engenharia de Contexto](./praticas/pratica-02-engenharia-contexto.md)
+3. [Prática 03 — Conhecimento Externo e RAG](./praticas/pratica-03-conhecimento-externo-rag.md)
+4. [Prática 04 — Agente Simples](./praticas/pratica-04-agente-simples.md)
+5. [Prática 05 — Agente com Ferramentas](./praticas/pratica-05-agente-ferramentas.md)
+6. [Prática 06 — Observabilidade e Projeto Final](./praticas/pratica-06-observabilidade-projeto-final.md)
 
 ---
 
